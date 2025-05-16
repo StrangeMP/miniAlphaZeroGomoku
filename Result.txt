@@ -1,0 +1,167 @@
+Network Architecture: 
+Channels: 7, Height: 15, Width: 15, Filters: 32, Blocks: 4, Board Size: 225
+Performance Test Results:
+------------------------
+Float ResNet: 193.115 iterations per second
+Int8 ResNet: 1150.7 iterations per second
+Int8 is 5.95859x faster than float
+Redundant result to make sure compiler doesn't optimize away the computation:
+Float result: 0
+Int8 result: 0
+
+
+Network Architecture: 
+Channels: 7, Height: 15, Width: 15, Filters: 48, Blocks: 4, Board Size: 225
+Performance Test Results:
+------------------------
+Float ResNet: 82.6798 iterations per second
+Int8 ResNet: 620.22 iterations per second
+Int8 is 7.50147x faster than float
+Redundant result to make sure compiler doesn't optimize away the computation:
+Float result: 0
+Int8 result: 0
+
+
+Network Architecture: 
+Channels: 7, Height: 15, Width: 15, Filters: 64, Blocks: 4, Board Size: 225
+Performance Test Results:
+------------------------
+Float ResNet: 44.9233 iterations per second
+Int8 ResNet: 392.147 iterations per second
+Int8 is 8.72925x faster than float
+Redundant result to make sure compiler doesn't optimize away the computation:
+Float result: 0
+Int8 result: 0
+
+
+Network Architecture: 
+Channels: 7, Height: 15, Width: 15, Filters: 32, Blocks: 5, Board Size: 225
+Performance Test Results:
+------------------------
+Float ResNet: 154.273 iterations per second
+Int8 ResNet: 977.27 iterations per second
+Int8 is 6.33467x faster than float
+Redundant result to make sure compiler doesn't optimize away the computation:
+Float result: 0
+Int8 result: 0
+
+Network Architecture: 
+Channels: 7, Height: 15, Width: 15, Filters: 64, Blocks: 5, Board Size: 225
+Performance Test Results:
+------------------------
+Float ResNet: 35.9249 iterations per second
+Int8 ResNet: 307.304 iterations per second
+Int8 is 8.55408x faster than float
+Redundant result to make sure compiler doesn't optimize away the computation:
+Float result: 0
+Int8 result: 0
+
+Network Architecture: 
+Channels: 7, Height: 15, Width: 15, Filters: 32, Blocks: 6, Board Size: 225
+Performance Test Results:
+------------------------
+Float ResNet: 129.646 iterations per second
+Int8 ResNet: 842.361 iterations per second
+Int8 is 6.49741x faster than float
+Redundant result to make sure compiler doesn't optimize away the computation:
+Float result: 0
+Int8 result: 0
+
+Network Architecture: 
+Channels: 7, Height: 15, Width: 15, Filters: 48, Blocks: 6, Board Size: 225
+Performance Test Results:
+------------------------
+Float ResNet: 55.046 iterations per second
+Int8 ResNet: 433.954 iterations per second
+Int8 is 7.88349x faster than float
+Redundant result to make sure compiler doesn't optimize away the computation:
+Float result: 0
+Int8 result: 0
+
+Network Architecture: 
+Channels: 7, Height: 15, Width: 15, Filters: 64, Blocks: 6, Board Size: 225
+Performance Test Results:
+------------------------
+Float ResNet: 30.2101 iterations per second
+Int8 ResNet: 273.226 iterations per second
+Int8 is 9.04422x faster than float
+Redundant result to make sure compiler doesn't optimize away the computation:
+Float result: 0
+Int8 result: 0
+
+Network Architecture: 
+Channels: 7, Height: 15, Width: 15, Filters: 32, Blocks: 7, Board Size: 225
+Performance Test Results:
+------------------------
+Float ResNet: 109.896 iterations per second
+Int8 ResNet: 708.203 iterations per second
+Int8 is 6.44429x faster than float
+Redundant result to make sure compiler doesn't optimize away the computation:
+Float result: 0
+Int8 result: 0
+
+Network Architecture: 
+Channels: 7, Height: 15, Width: 15, Filters: 48, Blocks: 7, Board Size: 225
+Performance Test Results:
+------------------------
+Float ResNet: 47.1664 iterations per second
+Int8 ResNet: 389.726 iterations per second
+Int8 is 8.2628x faster than float
+Redundant result to make sure compiler doesn't optimize away the computation:
+Float result: 0
+Int8 result: 0
+
+Network Architecture: 
+Channels: 7, Height: 15, Width: 15, Filters: 64, Blocks: 7, Board Size: 225
+Performance Test Results:
+------------------------
+Float ResNet: 26.0279 iterations per second
+Int8 ResNet: 238.963 iterations per second
+Int8 is 9.18102x faster than float
+Redundant result to make sure compiler doesn't optimize away the computation:
+Float result: 0
+Int8 result: 0
+
+Network Architecture: 
+Channels: 7, Height: 15, Width: 15, Filters: 64, Blocks: 16, Board Size: 225
+Performance Test Results:
+------------------------
+Float ResNet: 11.5282 iterations per second
+Int8 ResNet: 109.978 iterations per second
+Int8 is 9.53989x faster than float
+Redundant result to make sure compiler doesn't optimize away the computation:
+Float result: 0
+Int8 result: 0
+
+Network Architecture: 
+Channels: 7, Height: 15, Width: 15, Filters: 64, Blocks: 12, Board Size: 225
+Performance Test Results:
+------------------------
+Float ResNet: 13.676 iterations per second
+Int8 ResNet: 144.35 iterations per second
+Int8 is 10.555x faster than float
+Redundant result to make sure compiler doesn't optimize away the computation:
+Float result: 0
+Int8 result: 0
+
+Network Architecture: 
+Channels: 7, Height: 15, Width: 15, Filters: 80, Blocks: 8, Board Size: 225
+Performance Test Results:
+------------------------
+Float ResNet: 13.5003 iterations per second
+Int8 ResNet: 145.454 iterations per second
+Int8 is 10.7741x faster than float
+Redundant result to make sure compiler doesn't optimize away the computation:
+Float result: 0
+Int8 result: 0
+
+Network Architecture: 
+Channels: 7, Height: 15, Width: 15, Filters: 96, Blocks: 6, Board Size: 225
+Performance Test Results:
+------------------------
+Float ResNet: 13.3297 iterations per second
+Int8 ResNet: 137.967 iterations per second
+Int8 is 10.3504x faster than float
+Redundant result to make sure compiler doesn't optimize away the computation:
+Float result: 0
+Int8 result: 0

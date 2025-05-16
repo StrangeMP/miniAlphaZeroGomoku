@@ -1,0 +1,5 @@
+IndentWidth: 2
+ColumnLimit: 120
+BasedOnStyle: LLVM
+IndentCaseLabels: true
+AlwaysBreakTemplateDeclarations: MultiLine
