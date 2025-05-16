@@ -6,7 +6,6 @@
 #include <initializer_list>
 #include <numeric>
 #include <ostream>
-#include <sstream>
 #include <string>
 #ifdef DEBUG
 #include <format>
@@ -30,130 +29,9 @@ template <typename T, size_t L> struct Vec : std::array<T, L> {
 
   constexpr T dot(const Vec &v) const { return std::inner_product(this->begin(), this->end(), v.begin(), T{0}); }
 
-  constexpr Vec operator+(const Vec &v) const {
-    Vec r{};
-    for (size_t i = 0; i < L; ++i) {
-      r[i] = (*this)[i] + v[i];
-    }
-    return r;
-  }
-
-  constexpr Vec operator-(const Vec &v) const {
-    Vec r{};
-    for (size_t i = 0; i < L; ++i) {
-      r[i] = (*this)[i] - v[i];
-    }
-    return r;
-  }
-
-  constexpr Vec operator*(const Vec &v) const {
-    Vec r{};
-    for (size_t i = 0; i < L; ++i) {
-      r[i] = (*this)[i] * v[i];
-    }
-    return r;
-  }
-
-  constexpr Vec operator/(const Vec &v) const {
-    Vec r{};
-    for (size_t i = 0; i < L; ++i) {
-      r[i] = (*this)[i] / v[i];
-    }
-    return r;
-  }
-
-  constexpr Vec operator*(const T &s) const {
-    Vec r{};
-    for (size_t i = 0; i < L; ++i) {
-      r[i] = (*this)[i] * s;
-    }
-    return r;
-  }
-
-  constexpr Vec operator/(const T &s) const {
-    Vec r{};
-    for (size_t i = 0; i < L; ++i) {
-      r[i] = (*this)[i] / s;
-    }
-    return r;
-  }
-
-  constexpr Vec operator+(const T &s) const {
-    Vec r{};
-    for (size_t i = 0; i < L; ++i) {
-      r[i] = (*this)[i] + s;
-    }
-    return r;
-  }
-
-  constexpr Vec operator-(const T &s) const {
-    Vec r{};
-    for (size_t i = 0; i < L; ++i) {
-      r[i] = (*this)[i] - s;
-    }
-    return r;
-  }
-
-  constexpr Vec operator-() const {
-    Vec r{};
-    for (size_t i = 0; i < L; ++i) {
-      r[i] = -(*this)[i];
-    }
-    return r;
-  }
-
   constexpr Vec &operator+=(const Vec &v) {
     for (size_t i = 0; i < L; ++i) {
       (*this)[i] += v[i];
-    }
-    return *this;
-  }
-
-  constexpr Vec &operator-=(const Vec &v) {
-    for (size_t i = 0; i < L; ++i) {
-      (*this)[i] -= v[i];
-    }
-    return *this;
-  }
-
-  constexpr Vec &operator*=(const Vec &v) {
-    for (size_t i = 0; i < L; ++i) {
-      (*this)[i] *= v[i];
-    }
-    return *this;
-  }
-
-  constexpr Vec &operator/=(const Vec &v) {
-    for (size_t i = 0; i < L; ++i) {
-      (*this)[i] /= v[i];
-    }
-    return *this;
-  }
-
-  constexpr Vec &operator*=(const T &s) {
-    for (size_t i = 0; i < L; ++i) {
-      (*this)[i] *= s;
-    }
-    return *this;
-  }
-
-  constexpr Vec &operator/=(const T &s) {
-    for (size_t i = 0; i < L; ++i) {
-      (*this)[i] /= s;
-    }
-    return *this;
-  }
-
-  constexpr Vec &operator+=(const T &s) {
-    for (size_t i = 0; i < L; ++i) {
-      (*this)[i] += s;
-    }
-    return *this;
-  }
-
-  constexpr Vec &operator-=(const T &s) {
-    for (size_t i = 0; i < L; ++i) {
-      (*this)[i] -= s;
     }
     return *this;
   }
@@ -174,44 +52,11 @@ template <typename T, size_t L> struct Vec : std::array<T, L> {
 };
 
 template <typename T, size_t R, size_t C> struct Matrix : Vec<Vec<T, C>, R> {
-  constexpr Matrix operator+(const Matrix &m) const {
-    Matrix r{};
+  constexpr Matrix &operator+=(const Matrix &m) {
     for (size_t i = 0; i < R; ++i) {
-      r[i] = (*this)[i] + m[i];
+      (*this)[i] += m[i];
     }
-    return r;
-  }
-
-  constexpr Matrix operator-(const Matrix &m) const {
-    Matrix r{};
-    for (size_t i = 0; i < R; ++i) {
-      r[i] = (*this)[i] - m[i];
-    }
-    return r;
-  }
-
-  constexpr Matrix operator*(const T &s) const {
-    Matrix r{};
-    for (size_t i = 0; i < R; ++i) {
-      r[i] = (*this)[i] * s;
-    }
-    return r;
-  }
-
-  constexpr Vec<T, C> operator*(const Vec<T, C> &v) const {
-    Vec<T, C> r{};
-    for (size_t i = 0; i < R; ++i) {
-      r[i] = (*this)[i].dot(v);
-    }
-    return r;
-  }
-
-  constexpr Matrix transpose() const {
-    Matrix<T, C, R> r{};
-    for (size_t i = 0; i < R; ++i)
-      for (size_t j = 0; j < C; ++j)
-        r[j][i] = (*this)[i][j];
-    return r;
+    return *this;
   }
 
   constexpr Matrix &operator=(const Matrix &m) { return static_cast<Matrix &>(Vec<Vec<T, C>, R>::operator=(m)); }
@@ -226,48 +71,6 @@ template <typename T, size_t R, size_t C> struct Matrix : Vec<Vec<T, C>, R> {
     }
     s += "]";
     return s;
-  }
-
-  constexpr Matrix &operator+=(const Matrix &m) {
-    for (size_t i = 0; i < R; ++i) {
-      (*this)[i] += m[i];
-    }
-    return *this;
-  }
-
-  constexpr Matrix &operator-=(const Matrix &m) {
-    for (size_t i = 0; i < R; ++i) {
-      (*this)[i] -= m[i];
-    }
-    return *this;
-  }
-
-  constexpr Matrix &operator*=(const T &s) {
-    for (size_t i = 0; i < R; ++i) {
-      (*this)[i] *= s;
-    }
-    return *this;
-  }
-
-  constexpr Matrix &operator/=(const T &s) {
-    for (size_t i = 0; i < R; ++i) {
-      (*this)[i] /= s;
-    }
-    return *this;
-  }
-
-  constexpr Matrix &operator+=(const T &s) {
-    for (size_t i = 0; i < R; ++i) {
-      (*this)[i] += s;
-    }
-    return *this;
-  }
-
-  constexpr Matrix &operator-=(const T &s) {
-    for (size_t i = 0; i < R; ++i) {
-      (*this)[i] -= s;
-    }
-    return *this;
   }
 
   constexpr Matrix &operator=(const Vec<Vec<T, C>, R> &m) {
