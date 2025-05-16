@@ -6,7 +6,12 @@
 #include <initializer_list>
 #include <numeric>
 #include <ostream>
+#include <sstream>
 #include <string>
+#ifdef DEBUG
+#include <format>
+#endif
+
 template <typename T, size_t L> struct Vec : std::array<T, L> {
   using std::array<T, L>::array;
   Vec(std::initializer_list<T> il) {
@@ -14,6 +19,12 @@ template <typename T, size_t L> struct Vec : std::array<T, L> {
     for (const auto &v : il) {
       (*this)[i] = v;
       ++i;
+    }
+  }
+
+  template <typename U> Vec(const Vec<U, L> &v) {
+    for (size_t i = 0; i < L; ++i) {
+      (*this)[i] = static_cast<T>(v[i]);
     }
   }
 
@@ -311,13 +322,25 @@ struct Tensor : std::array<Matrix<T, Height, Width>, Channels> {
       ++i;
     }
   }
+
+  using base = std::array<Matrix<T, Height, Width>, Channels>;
+  Tensor &operator+=(const Tensor &t) {
+    for (size_t i = 0; i < Channels; ++i) {
+      (*this)[i] += t[i];
+    }
+    return *this;
+  }
+
+  Vec<T, Channels * Height * Width> flatten() const;
+
+  auto window();
 };
 
-template <size_t Delta_Row, size_t Delta_Col, size_t Delta_Dep, typename T, size_t Channels, size_t Height,
+template <size_t Delta_Dep, size_t Delta_Row, size_t Delta_Col, typename T, size_t Channels, size_t Height,
           size_t Width>
 struct TensorWindow {
   Tensor<T, Channels, Height, Width> *const data;
-  const int Row, Col, Dep;
+  const int Row, Col, Dep; // Global offsets
 
   TensorWindow(Tensor<T, Channels, Height, Width> &data, int row, int col, int dep)
       : data(&data), Row(row), Col(col), Dep(dep) {}
@@ -328,7 +351,12 @@ struct TensorWindow {
     auto c = static_cast<int>(column) + Col;
     bool valid = (d >= 0 && d < Channels) && (r >= 0 && r < Height) && (c >= 0 && c < Width);
     if (!valid) {
-      throw std::out_of_range("TensorWindow: Access out of bounds");
+      std::string errmsg =
+          std::format("TensorWindow: Access out of bounds {{d({}) >= 0 && d({}) < Channels({}), r({}) >= 0 && "
+                      "r({}) < Height({}), c({}) >= 0 && c({}) < Width({})}} evaluated to false",
+                      d, d, Channels, r, r, Height, c, c, Width);
+
+      throw std::out_of_range(errmsg);
     }
   }
 
@@ -391,10 +419,19 @@ struct TensorWindow {
   }
 };
 
-template <size_t Delta_Row, size_t Delta_Col, size_t Delta_Dep, typename T, size_t Channels, size_t Height,
+template <size_t Delta_Dep, size_t Delta_Row, size_t Delta_Col, typename T, size_t Channels, size_t Height,
           size_t Width>
 auto make_TensorWindow(Tensor<T, Channels, Height, Width> &data, size_t row, size_t col, size_t dep) {
-  return TensorWindow<Delta_Row, Delta_Col, Delta_Dep, T, Channels, Height, Width>(data, row, col, dep);
+  return TensorWindow<Delta_Dep, Delta_Row, Delta_Col, T, Channels, Height, Width>(data, row, col, dep);
+}
+
+template <typename T, size_t Channels, size_t Height, size_t Width> auto Tensor<T, Channels, Height, Width>::window() {
+  return make_TensorWindow<Channels, Height, Width, T, Channels, Height, Width>(*this, 0, 0, 0);
+}
+
+template <typename T, size_t Channels, size_t Height, size_t Width>
+Vec<T, Channels * Height * Width> Tensor<T, Channels, Height, Width>::flatten() const {
+  return const_cast<Tensor *>(this)->window().flatten();
 }
 
 template <typename T> constexpr T ceil_div(T numerator, T denominator) {
