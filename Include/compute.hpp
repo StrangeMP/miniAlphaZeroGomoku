@@ -137,6 +137,13 @@ struct Tensor : std::array<Matrix<T, Height, Width>, Channels> {
   Vec<T, Channels * Height * Width> flatten() const;
 
   auto window();
+
+  using value_t = T;
+  static constexpr size_t CHANNELS = Channels;
+  static constexpr size_t HEIGHT = Height;
+  static constexpr size_t WIDTH = Width;
+  static constexpr size_t SIZE = Channels * Height * Width;
+  static constexpr size_t SIZE2D = Height * Width;
 };
 
 template <size_t Delta_Dep, size_t Delta_Row, size_t Delta_Col, typename T, size_t Channels, size_t Height,
