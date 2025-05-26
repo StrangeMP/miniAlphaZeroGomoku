@@ -5,14 +5,15 @@
 #include <cmath>
 #include <algorithm>
 #include <random>
-#include <numeric> // 用于 std::iota
 #include <cstdint>
 #include <limits> // 需要 std::numeric_limits
-#include <optional> // 用于 std::optional - 确保 C++17 已启用
 #include <functional> // 用于 std::function - 需要 C++11 或更高版本
+#include <string> 
 #include"compute.hpp" // 假设此文件包含 Matrix, Tensor, AZNet 定义
 #include "nnet.hpp" // 假设此文件包含神经网络定义
+#include "nlohmann/json.hpp" //  for JSON processing
 
+using json = nlohmann::json; // 在全局作用域或 main 之前使用 using 声明
 
 // --- 配置参数 (来自 config.py 和 mcts.py) ---
 namespace Config {
@@ -61,7 +62,7 @@ namespace Utils {
 
     Coordinate index_to_coordinate(int index, int board_size) {
         return {index / board_size, index % board_size};
-    }
+    }  
 
     int coordinate_to_index(Coordinate coord, int board_size) {
         return coord.r * board_size + coord.c;
@@ -87,7 +88,8 @@ namespace Utils {
     InputTensor board_to_tensor_cpp(
         const MatrixType& board_state,
         int8_t player_to_play,
-        std::optional<Utils::Coordinate> last_action_coord // 需要 C++17 支持 std::optional
+        Utils::Coordinate last_action_coord, // 直接传递坐标
+        bool last_action_valid // 新增布尔标志
     ) {
         InputTensor tensor_data{}; // 零初始化
 
@@ -113,10 +115,10 @@ namespace Utils {
         }
 
         // 通道 2: 最后一步落子位置 (值为 1.0f)
-        if (last_action_coord.has_value()) {
-            Utils::Coordinate coord = last_action_coord.value();
-            if (coord.r >= 0 && coord.r < Config::BOARD_SIZE && coord.c >= 0 && coord.c < Config::BOARD_SIZE) {
-                tensor_data[2][coord.r][coord.c] = 1.0f; // 修正后的 Tensor 访问
+        if (last_action_valid) { // 使用布尔标志检查
+            if (last_action_coord.r >= 0 && last_action_coord.r < Config::BOARD_SIZE && 
+                last_action_coord.c >= 0 && last_action_coord.c < Config::BOARD_SIZE) {
+                tensor_data[2][last_action_coord.r][last_action_coord.c] = 1.0f; 
             }
         }
         return tensor_data;
@@ -135,8 +137,8 @@ struct Node : std::enable_shared_from_this<Node> {
     std::shared_ptr<Node> parent;
     int8_t color_to_play;
     float prior_p;
-    int visit_count; // 修改: 移除 std::atomic
-    float value_sum; // 修改: 移除 std::atomic
+    int visit_count; 
+    float value_sum; 
     bool is_expanded;
     bool is_end_node;             // 是否是终止节点
     float game_result_if_end;    // 如果是终止节点, 游戏结果 (-1, 0, 1) (已改为 float 类型)
@@ -348,10 +350,10 @@ public:
 
         if (agent_color == Config::WHITE_STONE) {
             active_net = &net_w;
-            std::cout << "MCTS_Agent initialized for WHITE player, using net_w." << std::endl;
+            // std::cout << "MCTS_Agent initialized for WHITE player, using net_w." << std::endl;
         } else if (agent_color == Config::BLACK_STONE) {
             active_net = &net_b;
-            std::cout << "MCTS_Agent initialized for BLACK player, using net_b." << std::endl;
+            // std::cout << "MCTS_Agent initialized for BLACK player, using net_b." << std::endl;
         } else {
             // 错误处理：未知的玩家颜色
             std::cerr << "Error: Unknown agent_color (" << static_cast<int>(agent_color)
@@ -463,8 +465,6 @@ public:
         }
 
         std::shared_ptr<Node> current_node = root;
-        // std::vector<std::shared_ptr<Node>> path; // 在此版本的反向传播中未明确使用路径
-        // path.push_back(current_node);
 
         // 1. 选择
         while (current_node->is_expanded && !current_node->is_end_node) {
@@ -501,7 +501,7 @@ public:
                 int8_t next_player_color = (current_node->color_to_play == Config::BLACK_STONE) ? Config::WHITE_STONE : Config::BLACK_STONE;
 
                 // 新子节点的 prior_p 来自父节点 (current_node) 的原始 NN 策略
-                float prior_p_for_new_node = 0.1f; // 占位符：应从 current_node->raw_nn_policy_for_children[best_action_idx] 获取
+                float prior_p_for_new_node = 0.1f; 
                 // 确保 current_node 已扩展且 raw_nn_policy_for_children 已填充
                 if (current_node->is_expanded && !current_node->raw_nn_policy_for_children.empty() && best_action_idx < current_node->raw_nn_policy_for_children.size()) {
                     prior_p_for_new_node = current_node->raw_nn_policy_for_children[best_action_idx];
@@ -513,7 +513,6 @@ public:
                 current_node->children[best_action_idx] = std::make_shared<Node>(current_node, prior_p_for_new_node, next_player_color, next_board_state, best_action_idx);
                 current_node = current_node->children[best_action_idx];
             }
-            // path.push_back(current_node);
         }
 
         // 2. 扩展和评估 (如果尚未终止)
@@ -538,21 +537,6 @@ public:
         current_node->backup(leaf_value);
     }
 
-    // 用于 check_game_end 的静态包装器，以便在 mcts_expand_and_evaluate 不是成员函数时传递给它
-    // 如果 mcts_expand_and_evaluate 是一个自由函数，这有点像一个变通方法。
-    // 如果 mcts_expand_and_evaluate 可以是成员函数或接受 std::function，则更简洁。
-    // 目前，假设 mcts_expand_and_evaluate 是一个自由函数，我们传递 MCTS_Agent 的 check_game_end。
-    /*
-    static GameEndStatus check_game_end_static_wrapper(const MatrixType& board, Utils::Coordinate last_action_coord, int8_t last_player_color, MCTS_Agent* agent_instance) {
-        if (agent_instance) {
-            return agent_instance->check_game_end(board, last_action_coord, last_player_color);
-        }
-        // 如果实例为 null，则回退或出错
-        return {false, 0.0f};
-    }
-    */
-
-
 }; // MCTS_Agent 类
 
 
@@ -567,16 +551,16 @@ float mcts_expand_and_evaluate(
 {
     int8_t current_player_at_node = node_to_expand->color_to_play;
 
-    // 0. 检查游戏是否已在此节点结束 (在选择阶段可能未捕获到)
-    // 假设 node_to_expand->action_idx_that_led_to_this_node 和 node_to_expand->parent 可用于获取上一步操作
-    Utils::Coordinate last_action_coord = {-1, -1}; // 默认无效坐标
+    Utils::Coordinate last_action_coord = {-1, -1}; 
     int8_t player_who_made_last_move = Config::EMPTY_STONE;
+    bool is_last_action_valid_for_tensor = false; // For board_to_tensor_cpp
 
     if(node_to_expand->parent){
         // 如果有父节点，则导致此节点的动作是由父节点的玩家做出的
         player_who_made_last_move = node_to_expand->parent->color_to_play;
         if(node_to_expand->action_idx_that_led_to_this_node != -1){
             last_action_coord = Utils::index_to_coordinate(node_to_expand->action_idx_that_led_to_this_node, Config::BOARD_SIZE);
+            is_last_action_valid_for_tensor = true; // last_action_coord is now valid
         }
     }
     // 否则，如果是根节点，则没有“上一步操作”导致它。
@@ -608,7 +592,7 @@ float mcts_expand_and_evaluate(
     // 1. 将棋盘状态转换为 NN 输入张量
     // last_action_coord_for_tensor 应为导致 *当前* board_state 的动作。
     // 这与上面用于 check_game_end 的 last_action_coord 相同。
-    InputTensor nn_input = Utils::board_to_tensor_cpp(node_to_expand->board_state, current_player_at_node, last_action_coord);
+    InputTensor nn_input = Utils::board_to_tensor_cpp(node_to_expand->board_state, current_player_at_node, last_action_coord, is_last_action_valid_for_tensor);
 
     // 2. 通过神经网络进行推理
     auto nn_output_pair = current_active_net.feed(nn_input);
@@ -651,4 +635,308 @@ float mcts_expand_and_evaluate(
     // 5. 返回从 NN 获得的评估值
     // 该值是从 current_player_at_node (即 node_to_expand->color_to_play) 的角度看的。
     return value_from_nn;
+}
+
+
+// Helper to place stone and switch player, used in board reconstruction
+// 用于棋盘重建的辅助函数，放置棋子并切换玩家
+void place_stone_on_board(MatrixType& board, int r, int c, int8_t& current_player_color) {
+    if (r >= 0 && r < Config::BOARD_SIZE && c >= 0 && c < Config::BOARD_SIZE) {
+        if (board[r][c] == Config::EMPTY_STONE) { // 仅在空位时落子
+            board[r][c] = current_player_color;
+            current_player_color = (current_player_color == Config::BLACK_STONE) ? Config::WHITE_STONE : Config::BLACK_STONE;
+        }
+    }
+}
+
+int main() {
+    std::ios_base::sync_with_stdio(false); // 关闭C++标准流与C标准流的同步，提高cin/cout效率
+    std::cin.tie(NULL); // 解除cin与cout的绑定，进一步提高效率
+
+    int8_t ai_fixed_color = Config::BLACK_STONE; // AI固定的执棋颜色 (例如，总是执黑)
+    MCTS_Agent agent(ai_fixed_color); // 创建MCTS代理实例
+
+    Utils::Coordinate ai_black_first_move_coord = {-1, -1}; // 记录AI执黑时第一步的落子，用于换手
+    bool opponent_requested_swap_vs_ai_black = false;    // 标记对手(白方)是否在AI(黑方)第一步后请求换手
+    bool ai_white_performed_swap = false;                // 标记AI(白方)是否已经执行了换手操作
+
+    // --- 全局游戏状态 ---
+    MatrixType game_board_state{}; // 全局维护的棋盘状态
+    int8_t player_for_next_move_on_board = Config::BLACK_STONE; // 全局维护的轮到下棋的玩家
+    int processed_requests_count = 0; // 已处理的requests数量
+    int processed_responses_count = 0; // 已处理的responses数量
+    // --- 全局游戏状态结束 ---
+
+    int turn_id_counter = 0; // 回合计数器
+
+    while (true) { // 主游戏循环
+        json response_json; // 准备发送给裁判的JSON响应
+        std::string line; // 用于存储从标准输入读取的行
+        if (!std::getline(std::cin, line)) { // 从标准输入读取一行
+            break; // 如果读取失败 (例如，输入结束)，则退出循环
+        }
+        if (line.empty()) { // 如果读取的行是空的
+            continue; // 继续下一次循环
+        }
+
+        json input_json; // 用于存储解析后的输入JSON
+        try {
+            input_json = json::parse(line); // 解析JSON字符串
+        } catch (json::parse_error& e) { // 如果JSON解析失败
+            json error_response;
+            error_response["response"]["x"] = -1;
+            error_response["response"]["y"] = -1;
+            error_response["debug"] = "解析输入JSON错误: " + std::string(e.what());
+            std::cout << error_response.dump() << std::endl; // 发送错误响应
+            continue; // 继续下一次循环
+        }
+        response_json["debug"] = "MCTS Agent C++: 正在处理回合.";
+
+        // --- 同步/增量更新棋盘状态 ---
+        int current_total_requests = input_json["requests"].size();
+        int current_total_responses = input_json["responses"].size();
+
+        // 检查是否需要完全重建棋盘状态 (例如AI重启或历史记录不匹配)
+        // AI即将做出一个响应，所以期望的 processed_responses_count 应该是 current_total_responses
+        // 期望的 processed_requests_count 应该是 current_total_requests
+        bool needs_full_reconstruction = false;
+        if (processed_requests_count != current_total_requests || processed_responses_count != current_total_responses) {
+            // 如果AI是开局 (processed_responses_count == 0, current_total_responses == 0)
+            // 并且对手也还未下子 (processed_requests_count == 0, current_total_requests == 0), 则不需要重建。
+            // 或者AI是白棋，对手下了第一步 (processed_requests_count == 0, current_total_requests == 1, processed_responses_count == 0, current_total_responses == 0)
+            // 这种情况下，我们不立即认为需要完全重建，而是先尝试处理单个新request。
+            // 只有当计数器已经有值，但与输入JSON不匹配时，才更倾向于完全重建。
+            if ( (processed_requests_count > 0 || processed_responses_count > 0) || // 如果AI不是刚启动
+                 (current_total_requests > 1 || current_total_responses > 0) // 或者历史记录已经不止一步
+               ) {
+                 // 更精确的条件：如果AI的回合数 (由responses决定) 与已处理的responses不符，
+                 // 或者对手的步数 (由requests决定) 与已处理的requests不符。
+                 // 并且，这种不符不是因为AI即将下一步棋 (requests 比 responses 多一个)。
+                 if (current_total_responses != processed_responses_count ||
+                     (current_total_requests != processed_requests_count && current_total_requests != processed_requests_count + 1) )
+                 {
+                    needs_full_reconstruction = true;
+                    response_json["debug"] = response_json["debug"].get<std::string>() + " 检测到状态不同步，执行棋盘完全重建.";
+                 }
+            }
+        }
+
+
+        if (needs_full_reconstruction) {
+            game_board_state = MatrixType{}; // 重置棋盘
+            player_for_next_move_on_board = Config::BLACK_STONE; // 重新开始计数玩家
+            processed_requests_count = 0;
+            processed_responses_count = 0;
+
+            for (int i = 0; i < current_total_requests; ++i) {
+                if (i < current_total_responses) { // 处理成对的 request 和 response
+                    if (input_json["requests"][i].count("x") && input_json["requests"][i]["x"].get<int>() != -1) {
+                        place_stone_on_board(game_board_state, input_json["requests"][i]["x"].get<int>(), input_json["requests"][i]["y"].get<int>(), player_for_next_move_on_board);
+                    }
+                    processed_requests_count++;
+                    
+                    if (input_json["responses"][i].count("x") && input_json["responses"][i]["x"].get<int>() != -1) {
+                        place_stone_on_board(game_board_state, input_json["responses"][i]["x"].get<int>(), input_json["responses"][i]["y"].get<int>(), player_for_next_move_on_board);
+                    }
+                    processed_responses_count++;
+                } else { // 处理最后一个 request (如果 requests 比 responses 多)
+                    if (input_json["requests"][i].count("x") && input_json["requests"][i]["x"].get<int>() != -1) {
+                         place_stone_on_board(game_board_state, input_json["requests"][i]["x"].get<int>(), input_json["requests"][i]["y"].get<int>(), player_for_next_move_on_board);
+                    }
+                    processed_requests_count++;
+                    // 此时 player_for_next_move_on_board 已经是轮到AI了
+                }
+            }
+        }
+
+        // 处理当前回合对手的落子 (如果requests比responses多一个，并且我们没有进行完全重建)
+        // 或者说，如果 processed_requests_count < current_total_requests
+        Utils::Coordinate last_opponent_action = {-1, -1}; 
+        if (current_total_requests > processed_requests_count) { 
+            // 对手刚下了一步，这是最新的request
+            int new_request_idx = current_total_requests - 1; // 这是正确的，因为 processed_requests_count 是已处理的数量
+            if (input_json["requests"][new_request_idx].count("x") && input_json["requests"][new_request_idx]["x"].get<int>() != -1) {
+                last_opponent_action = {input_json["requests"][new_request_idx]["x"].get<int>(), input_json["requests"][new_request_idx]["y"].get<int>()};
+                place_stone_on_board(game_board_state, last_opponent_action.r, last_opponent_action.c, player_for_next_move_on_board);
+                response_json["debug"] = response_json["debug"].get<std::string>() + " 对手落子: (" + std::to_string(last_opponent_action.r) + "," + std::to_string(last_opponent_action.c) + ").";
+            } else if (input_json["requests"][new_request_idx].count("x") && input_json["requests"][new_request_idx]["x"].get<int>() == -1 && input_json["requests"][new_request_idx]["y"].get<int>() == -1) {
+                // 对手发送了 -1, -1 (例如换手请求)
+                last_opponent_action = {-1, -1};
+                 response_json["debug"] = response_json["debug"].get<std::string>() + " 对手发送了 (-1,-1).";
+                // player_for_next_move_on_board 此时不应改变，因为没有实际落子
+            }
+            processed_requests_count = current_total_requests; // 更新已处理的requests计数
+        } else if (current_total_requests == current_total_responses && current_total_requests == 0 && processed_requests_count == 0) {
+            // AI执黑开局，且是第一次处理 (processed_requests_count 为 0)
+            response_json["debug"] = response_json["debug"].get<std::string>() + " AI执黑开局.";
+        }
+        
+        // AI的回合数由 current_total_responses 决定 (AI即将做出第 current_total_responses 个response)
+        // turn_id_counter 用于换手逻辑中判断是否是第一/二回合等。
+        turn_id_counter = current_total_responses; 
+
+        MatrixType current_turn_board_state = game_board_state; // 将当前维护的棋盘状态复制一份用于本回合决策
+        int8_t player_for_next_move_this_turn = player_for_next_move_on_board; // 轮到下棋的玩家
+        // --- 同步/增量更新棋盘状态结束 ---
+
+        int8_t ai_search_color = player_for_next_move_this_turn;
+
+        // --- 换手逻辑 (SWAP LOGIC) ---
+        Utils::Coordinate ai_decision_move = {-1, -1}; // AI最终决定的落子，默认为无效/弃权
+        bool ai_sends_swap_signal_this_turn = false; // 标记AI本回合是否因为换手规则发送 (-1,-1)
+
+        if (ai_fixed_color == Config::BLACK_STONE) { // 如果AI固定执黑
+            if (turn_id_counter == 0 && ai_black_first_move_coord.r == -1) { // AI执黑，游戏的第一步
+                // AI作为黑方下第一手棋，MCTS正常运行
+                response_json["debug"] = response_json["debug"].get<std::string>() + " AI (黑棋) 下第一手.";
+                 ai_search_color = Config::BLACK_STONE; 
+            } else if (turn_id_counter == 1 && !opponent_requested_swap_vs_ai_black) { 
+                 if (last_opponent_action.r == -1 && last_opponent_action.c == -1) { 
+                    if (ai_black_first_move_coord.r != -1) { 
+                        current_turn_board_state[ai_black_first_move_coord.r][ai_black_first_move_coord.c] = Config::WHITE_STONE; 
+                        // game_board_state 也需要同步这个变化，因为它代表真实棋盘
+                        game_board_state[ai_black_first_move_coord.r][ai_black_first_move_coord.c] = Config::WHITE_STONE; 
+                        
+                        opponent_requested_swap_vs_ai_black = true; 
+                        ai_search_color = Config::BLACK_STONE; 
+                        response_json["debug"] = response_json["debug"].get<std::string>() +
+                                                 " AI黑棋: 对手换手. 我在 (" +
+                                                 std::to_string(ai_black_first_move_coord.r) + "," + std::to_string(ai_black_first_move_coord.c) +
+                                                 ") 的第一颗子现在是白棋. 我继续执黑.";
+                        // 此时 player_for_next_move_on_board 应该已经是 BLACK (AI的回合)
+                        // 因为对手发送-1,-1时，place_stone_on_board 没有执行，颜色不变。
+                        player_for_next_move_this_turn = Config::BLACK_STONE; // 确保本回合搜索颜色正确
+                    } else {
+                        response_json["debug"] = response_json["debug"].get<std::string>() + " 错误: 对手请求换手，但AI黑棋的第一步未被记录.";
+                    }
+                } else { // 对手正常落子
+                    ai_search_color = Config::BLACK_STONE;
+                }
+            } else { // 其他情况
+                 ai_search_color = Config::BLACK_STONE; 
+            }
+        } else { // AI固定执白
+            if (turn_id_counter == 0 && !ai_white_performed_swap) { 
+                if (last_opponent_action.r != -1) { // 黑棋下了有效的第一步
+                    current_turn_board_state[last_opponent_action.r][last_opponent_action.c] = Config::WHITE_STONE; 
+                    game_board_state[last_opponent_action.r][last_opponent_action.c] = Config::WHITE_STONE; 
+                    
+                    // AI执白，对手(黑)下了第一步后，player_for_next_move_on_board 经place_stone_on_board变为WHITE (AI的回合)
+                    // AI现在执行换手，将黑子变白，然后发送-1,-1，回合交还给黑方。
+                    player_for_next_move_on_board = Config::BLACK_STONE; // 全局状态更新：换手后轮到黑方
+                    player_for_next_move_this_turn = Config::BLACK_STONE; // AI发送-1,-1后，也轮到黑方 (MCTS不应搜索)
+
+                    ai_sends_swap_signal_this_turn = true; 
+                    ai_white_performed_swap = true; 
+                    response_json["debug"] = response_json["debug"].get<std::string>() +
+                                             " AI白棋: 对黑棋在 (" +
+                                             std::to_string(last_opponent_action.r) + "," + std::to_string(last_opponent_action.c) +
+                                             ") 的落子执行换手. 发送 -1,-1. 现在轮到黑棋.";
+                } else { 
+                    response_json["debug"] = response_json["debug"].get<std::string>() + " 错误: AI执白，但黑棋的第一步是-1,-1或缺失.";
+                    ai_decision_move = {0,0}; // 后备错误走法
+                }
+            } else {
+                // AI执白，且不是换手回合，所以AI应该搜索为白棋
+                ai_search_color = Config::WHITE_STONE;
+            }
+        }
+        
+        // MCTS agent的根节点使用 current_turn_board_state
+        agent.root = std::make_shared<Node>(nullptr, 1.0f, ai_search_color, current_turn_board_state, -1);
+        if (ai_search_color == Config::BLACK_STONE) agent.active_net = &agent.net_b;
+        else agent.active_net = &agent.net_w;
+
+        if (ai_sends_swap_signal_this_turn) { 
+            ai_decision_move = {-1, -1}; 
+        } else { 
+            // ... (MCTS 搜索逻辑，与之前类似, 使用 agent.root->board_state 即 current_turn_board_state) ...
+            // 确保这里的调试警告逻辑仍然合理
+            if (ai_fixed_color != agent.root->color_to_play && !(ai_fixed_color == Config::BLACK_STONE && opponent_requested_swap_vs_ai_black) && !(ai_fixed_color == Config::WHITE_STONE && ai_white_performed_swap && turn_id_counter == 0) ){
+                 response_json["debug"] = response_json["debug"].get<std::string>() +
+                                        " 警告: MCTS搜索颜色 (" + std::to_string(agent.root->color_to_play) +
+                                        ") 与AI固定颜色 (" + std::to_string(ai_fixed_color) + ") 不一致，可能在换手后出现.";
+            }
+
+            // 执行指定次数的MCTS模拟
+            for (int sim = 0; sim < Config::SIMULATION_TIMES; ++sim) {
+                agent.run_one_simulation();
+            }
+
+            int best_action_idx = -1; // 最佳走法的索引
+            long long max_visits = -1; // 最大访问次数
+            std::vector<int> legal_moves_for_root = Utils::board_to_legal_vec(agent.root->board_state); // 获取根节点的合法走法
+            bool found_move = false; // 是否找到了走法
+
+            // 从根节点的子节点中选择访问次数最多的合法走法
+            for (int i = 0; i < Config::BOARD_SQUARES; ++i) {
+                if (agent.root->children[i] && legal_moves_for_root[i]) { // 如果子节点存在且该走法合法
+                    if (agent.root->children[i]->visit_count > max_visits) {
+                        max_visits = agent.root->children[i]->visit_count;
+                        best_action_idx = i;
+                        found_move = true;
+                    }
+                }
+            }
+            
+            // 后备逻辑1: 如果MCTS没有找到被访问过的子节点，但存在合法走法，则选择第一个合法走法
+            if (!found_move && std::any_of(legal_moves_for_root.begin(), legal_moves_for_root.end(), [](int x){return x==1;})) { 
+                for (int i = 0; i < Config::BOARD_SQUARES; ++i) {
+                    if (legal_moves_for_root[i]) {
+                        best_action_idx = i;
+                        response_json["debug"] = response_json["debug"].get<std::string>() + " 后备: MCTS未找到已访问的子节点，选择第一个合法走法.";
+                        break;
+                    }
+                }
+                 if (best_action_idx != -1) found_move = true;
+            }
+
+            if (found_move) { // 如果找到了走法
+                ai_decision_move = Utils::index_to_coordinate(best_action_idx, Config::BOARD_SIZE); // 将索引转换为坐标
+                if (ai_fixed_color == Config::BLACK_STONE && turn_id_counter == 0) { // 如果AI执黑且是第一步
+                    ai_black_first_move_coord = ai_decision_move; // 记录第一步的落子
+                }
+            } else { // 如果通过MCTS或后备1仍未找到走法
+                response_json["debug"] = response_json["debug"].get<std::string>() + " MCTS或后备未能找到合法走法.";
+                // 后备逻辑2: 尝试寻找棋盘上任何一个合法的走法
+                bool any_legal_exists = false;
+                for (int i = 0; i < Config::BOARD_SQUARES; ++i) {
+                    if (legal_moves_for_root[i]) {
+                        ai_decision_move = Utils::index_to_coordinate(i, Config::BOARD_SIZE);
+                        response_json["debug"] = response_json["debug"].get<std::string>() + " 紧急后备: 选择棋盘上第一个可用的合法走法，索引 " + std::to_string(i);
+                        any_legal_exists = true;
+                        break;
+                    }
+                }
+                if (!any_legal_exists) { // 如果棋盘上确实没有任何合法走法
+                    ai_decision_move = {-1, -1}; // 决策为弃权
+                     response_json["debug"] = response_json["debug"].get<std::string>() + " 棋盘上不存在合法走法.";
+                }
+            }
+        }
+
+        // 如果AI本回合实际落子了 (不是发送-1,-1的换手信号)
+        if (!ai_sends_swap_signal_this_turn && ai_decision_move.r != -1) {
+            // 更新全局棋盘状态和下一个玩家
+            // place_stone_on_board 已经在上面处理对手棋步时或重建时更新了 player_for_next_move_on_board
+            // 这里是AI落子，所以 player_for_next_move_on_board 会再次切换
+            place_stone_on_board(game_board_state, ai_decision_move.r, ai_decision_move.c, player_for_next_move_on_board);
+            processed_responses_count++; // AI 做出了一次有效响应
+        } else if (ai_sends_swap_signal_this_turn) {
+            // AI发送了换手信号，也算一次响应
+            processed_responses_count++;
+        } else if (ai_decision_move.r == -1 && !ai_sends_swap_signal_this_turn) {
+            // AI没有有效落子 (例如棋盘已满或MCTS未能找到走法)，但也算作一次响应
+            // 这种情况通常意味着游戏结束或出现问题，player_for_next_move_on_board 可能不需要改变，
+            // 或者如果游戏规则允许“pass”，则会改变。这里我们假设不改变。
+            processed_responses_count++;
+             response_json["debug"] = response_json["debug"].get<std::string>() + " AI本回合无有效落子(非换手).";
+        }
+
+        response_json["response"]["x"] = ai_decision_move.r; // 设置响应中的x坐标
+        response_json["response"]["y"] = ai_decision_move.c; // 设置响应中的y坐标
+        std::cout << response_json.dump() << std::endl; // 将JSON响应打印到标准输出
+    }
+
+    return 0; // 程序正常结束
 }
