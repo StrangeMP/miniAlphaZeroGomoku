@@ -10,7 +10,9 @@
 #include <utility>
 
 struct Sigmoid {
-  template <typename T> static T call(const T &x) { return 1 / (1 + std::exp(-x)); }
+  template <typename T> static T call(const T &x) {
+    return 1 / (1 + std::exp(-x));
+  }
 };
 
 struct Tanh {
@@ -27,10 +29,14 @@ struct Linear {
 
 template <typename T, size_t L> Vec<float, L> softmax(const Vec<T, L> &v) {
   Vec<float, L> result;
-  float exp_sum = std::accumulate(v.begin(), v.end(), 0.0f,
-                                  [](float sum, T val) { return sum + std::exp(static_cast<float>(val)); });
+  T max_val = *std::max_element(v.begin(), v.end());
+  T sum = T(0);
   for (size_t i = 0; i < L; ++i) {
-    result[i] = std::exp(static_cast<float>(v[i])) / exp_sum;
+    result[i] = std::exp(v[i] - max_val);
+    sum += result[i];
+  }
+  for (size_t i = 0; i < L; ++i) {
+    result[i] /= sum;
   }
   return result;
 }
@@ -76,37 +82,41 @@ template <typename T, size_t Params, size_t Filters> struct BasicLayer {
   BasicLayer &operator=(const BasicLayer &l) = default;
   BasicLayer &operator=(BasicLayer &&l) = default;
 
-  template <size_t D = 0, typename TensorWindow = void> void feed(Vec<T, Params> &input, TensorWindow w) {
+  template <size_t D = 0, typename TensorWindow = void>
+  void feed(Vec<T, Params> &input, TensorWindow w) {
     size_t i = 0;
     for (auto &neuron : neurons) {
       switch (D) {
-        case 0:
-          w.at(i, 0, 0) = neuron.activate(input);
-          break;
-        case 1:
-          w.at(0, i, 0) = neuron.activate(input);
-          break;
-        case 2:
-          w.at(0, 0, i) = neuron.activate(input);
-          break;
-        default:
-          throw std::out_of_range("Invalid dimension for feed");
+      case 0:
+        w.at(i, 0, 0) = neuron.activate(input);
+        break;
+      case 1:
+        w.at(0, i, 0) = neuron.activate(input);
+        break;
+      case 2:
+        w.at(0, 0, i) = neuron.activate(input);
+        break;
+      default:
+        throw std::out_of_range("Invalid dimension for feed");
       }
       ++i;
     }
   }
 };
 
-template <typename T, size_t Filters, size_t InputChannels, size_t InputHeight, size_t InputWidth,
-          bool SamePadding = true, size_t KernelHeight = 3, size_t KernelWidth = 3, size_t Stride = 1>
+template <typename T, size_t Filters, size_t InputChannels, size_t InputHeight,
+          size_t InputWidth, bool SamePadding = true, size_t KernelHeight = 3,
+          size_t KernelWidth = 3, size_t Stride = 1>
 struct ConvLayer {
   BasicLayer<T, InputChannels * KernelHeight * KernelWidth, Filters> layer;
   using InputTensor = Tensor<T, InputChannels, InputHeight, InputWidth>;
 
   static constexpr size_t OutputHeight =
-      SamePadding ? ceil_div(InputHeight, Stride) : (InputHeight - KernelHeight) / Stride + 1;
+      SamePadding ? ceil_div(InputHeight, Stride)
+                  : (InputHeight - KernelHeight) / Stride + 1;
   static constexpr size_t OutputWidth =
-      SamePadding ? ceil_div(InputWidth, Stride) : (InputWidth - KernelWidth) / Stride + 1;
+      SamePadding ? ceil_div(InputWidth, Stride)
+                  : (InputWidth - KernelWidth) / Stride + 1;
   Tensor<T, Filters, OutputHeight, OutputWidth> _output;
   using OutputTensor = decltype(_output);
 
@@ -116,8 +126,12 @@ struct ConvLayer {
         int in_y, in_x;
         if constexpr (SamePadding) {
           // Calculate padding needed
-          int total_pad_h = std::max(0, static_cast<int>((OutputHeight - 1) * Stride + KernelHeight - InputHeight));
-          int total_pad_w = std::max(0, static_cast<int>((OutputWidth - 1) * Stride + KernelWidth - InputWidth));
+          int total_pad_h =
+              std::max(0, static_cast<int>((OutputHeight - 1) * Stride +
+                                           KernelHeight - InputHeight));
+          int total_pad_w =
+              std::max(0, static_cast<int>((OutputWidth - 1) * Stride +
+                                           KernelWidth - InputWidth));
 
           int pad_top = total_pad_h / 2;
           int pad_left = total_pad_w / 2;
@@ -130,7 +144,9 @@ struct ConvLayer {
           in_x = out_x * Stride;
         }
 
-        auto receptive_field = make_TensorWindow<InputChannels, KernelHeight, KernelWidth>(input, in_y, in_x, 0);
+        auto receptive_field =
+            make_TensorWindow<InputChannels, KernelHeight, KernelWidth>(
+                input, in_y, in_x, 0);
         auto vec = receptive_field.flatten();
         auto entry = make_TensorWindow<Filters, 1, 1>(_output, out_y, out_x, 0);
         layer.feed(vec, entry);
@@ -142,7 +158,8 @@ struct ConvLayer {
   const decltype(_output) &output() const { return _output; }
 };
 
-template <typename T, size_t Channels, size_t Height, size_t Width> struct NormLayer {
+template <typename T, size_t Channels, size_t Height, size_t Width>
+struct NormLayer {
   std::array<T, Channels> gamma;
   std::array<T, Channels> beta;
   std::array<T, Channels> mean;
@@ -160,8 +177,8 @@ template <typename T, size_t Channels, size_t Height, size_t Width> struct NormL
     }
   }
 
-  NormLayer(const std::array<T, Channels> &g, const std::array<T, Channels> &b, const std::array<T, Channels> &m,
-            const std::array<T, Channels> &v)
+  NormLayer(const std::array<T, Channels> &g, const std::array<T, Channels> &b,
+            const std::array<T, Channels> &m, const std::array<T, Channels> &v)
       : gamma(g), beta(b), mean(m), var(v) {}
 
   void feed(const Tensor<T, Channels, Height, Width> &input) {
@@ -169,7 +186,8 @@ template <typename T, size_t Channels, size_t Height, size_t Width> struct NormL
       for (size_t h = 0; h < Height; ++h) {
         for (size_t w = 0; w < Width; ++w) {
           // Apply normalization formula
-          T normalized = (input[c][h][w] - mean[c]) / std::sqrt(var[c] + epsilon);
+          T normalized =
+              (input[c][h][w] - mean[c]) / std::sqrt(var[c] + epsilon);
           _output[c][h][w] = gamma[c] * normalized + beta[c];
         }
       }
@@ -181,7 +199,9 @@ template <typename T, size_t Channels, size_t Height, size_t Width> struct NormL
 };
 
 // Activation layer to apply activation function
-template <typename T, size_t Channels, size_t Height, size_t Width, typename Activation = ReLU> struct ActivationLayer {
+template <typename T, size_t Channels, size_t Height, size_t Width,
+          typename Activation = ReLU>
+struct ActivationLayer {
   Tensor<T, Channels, Height, Width> _output;
 
   void feed(const Tensor<T, Channels, Height, Width> &input) {
@@ -198,7 +218,8 @@ template <typename T, size_t Channels, size_t Height, size_t Width, typename Act
   const decltype(_output) &output() const { return _output; }
 };
 
-template <typename T, size_t Channels, size_t Height, size_t Width, typename Activation = ReLU>
+template <typename T, size_t Channels, size_t Height, size_t Width,
+          typename Activation = ReLU>
 struct FusedNormActivationLayer {
   Tensor<T, Channels, Height, Width> _output;
 
@@ -222,7 +243,8 @@ struct FusedNormActivationLayer {
       for (size_t h = 0; h < Height; ++h) {
         for (size_t w = 0; w < Width; ++w) {
           // Apply normalization formula
-          T normalized = (input[c][h][w] - mean[c]) / std::sqrt(var[c] + epsilon);
+          T normalized =
+              (input[c][h][w] - mean[c]) / std::sqrt(var[c] + epsilon);
           _output[c][h][w] = Activation::call(gamma[c] * normalized + beta[c]);
         }
       }
@@ -233,10 +255,13 @@ struct FusedNormActivationLayer {
   const decltype(_output) &output() const { return _output; }
 };
 
-template <typename T, size_t Channels, size_t Height, size_t Width, bool SamePadding = true, typename Activation = ReLU,
+template <typename T, size_t Channels, size_t Height, size_t Width,
+          bool SamePadding = true, typename Activation = ReLU,
           size_t KernelHeight = 3, size_t KernelWidth = 3, size_t Stride = 1>
 struct ResBlock {
-  ConvLayer<T, Channels, Channels, Height, Width, SamePadding, KernelHeight, KernelWidth, Stride> conv1, conv2;
+  ConvLayer<T, Channels, Channels, Height, Width, SamePadding, KernelHeight,
+            KernelWidth, Stride>
+      conv1, conv2;
   FusedNormActivationLayer<T, Channels, Height, Width> na1;
   NormLayer<T, Channels, Height, Width> norm2;
   ActivationLayer<T, Channels, Height, Width, Activation> activate2;
@@ -258,17 +283,18 @@ struct ResBlock {
   const OutputTensor &output() const { return activate2.output(); }
 };
 
-template <typename T, size_t Filters, size_t Channels, size_t Height, size_t Width, size_t Blocks,
-          typename Activation = ReLU, size_t KernelHeight = 3, size_t KernelWidth = 3, size_t Stride = 1>
+template <typename T, size_t Filters, size_t Height, size_t Width,
+          size_t Blocks, typename Activation = ReLU, size_t KernelHeight = 3,
+          size_t KernelWidth = 3, size_t Stride = 1>
 struct ResNet {
-  ConvLayer<T, Filters, Channels, Height, Width, true> conv; // One layer to align input channels with filters
-  std::array<ResBlock<T, Filters, Height, Width, true, Activation, KernelHeight, KernelWidth, Stride>, Blocks> blocks;
-  using InputTensor = typename decltype(conv)::InputTensor;
+  using BlockType = ResBlock<T, Filters, Height, Width, true, Activation,
+                             KernelHeight, KernelWidth, Stride>;
+  std::array<BlockType, Blocks> blocks;
+  using InputTensor = typename BlockType::InputTensor;
   using OutputTensor = typename decltype(blocks)::value_type::OutputTensor;
 
   void feed(InputTensor &input) {
-    conv.feed(input);
-    OutputTensor *block_input = &conv._output;
+    OutputTensor *block_input = &input;
     for (auto &block : blocks) {
       block.feed(*block_input);
       block.output() += *block_input; // Residual connection
@@ -280,8 +306,8 @@ struct ResNet {
   const OutputTensor &output() const { return blocks.back().output(); }
 };
 
-template <typename InType, typename OutType, size_t Filters, size_t Channels, size_t Height, size_t Width,
-          typename Activation = ReLU>
+template <typename InType, typename OutType, size_t Filters, size_t Channels,
+          size_t Height, size_t Width, typename Activation = ReLU>
 struct DenseLayer {
   BasicLayer<OutType, Channels * Height * Width, Filters> layer;
   Tensor<OutType, 1, 1, Filters> _output;
@@ -308,12 +334,15 @@ struct DenseLayer {
   const auto &out_vector() const { return _output[0][0]; }
 };
 
-template <typename T, size_t ResFilters, size_t PolicyFilters, size_t ValueFilters, size_t Channels, size_t Height,
-          size_t Width, size_t Blocks>
+template <typename T, size_t ResFilters, size_t PolicyFilters,
+          size_t ValueFilters, size_t Channels, size_t Height, size_t Width,
+          size_t Blocks>
 struct AZNet {
   using value_t = float;
   using prob_t = Vec<value_t, Height * Width>;
-  ResNet<T, ResFilters, Channels, Height, Width, Blocks> resnet;
+  ConvLayer<T, ValueFilters, Channels, Height, Width> conv1;
+  FusedNormActivationLayer<T, ValueFilters, Height, Width> na1;
+  ResNet<T, ResFilters, Height, Width, Blocks> resnet;
 
   // Policy head
   ConvLayer<T, PolicyFilters, ResFilters, Height, Width> pi_conv;
@@ -328,10 +357,12 @@ struct AZNet {
   Vec<value_t, Height * Width> pi;
   value_t v;
 
-  using InputTensor = typename decltype(resnet)::InputTensor;
+  using InputTensor = typename decltype(conv1)::InputTensor;
 
   auto feed(InputTensor &input) {
-    resnet.feed(input);
+    conv1.feed(input);
+    na1.feed(conv1.output());
+    resnet.feed(na1.output());
     auto &resnet_output = resnet.output();
 
     // Policy head

@@ -12,8 +12,10 @@
 #endif
 
 template <typename T, size_t L> struct Vec : std::array<T, L> {
+  Vec() = default;
+
   using std::array<T, L>::array;
-  Vec(std::initializer_list<T> il) {
+  constexpr Vec(std::initializer_list<T> il) {
     size_t i = 0;
     for (const auto &v : il) {
       (*this)[i] = v;
@@ -21,7 +23,7 @@ template <typename T, size_t L> struct Vec : std::array<T, L> {
     }
   }
 
-  template <typename U> Vec(const Vec<U, L> &v) {
+  template <typename U> constexpr Vec(const Vec<U, L> &v) {
     for (size_t i = 0; i < L; ++i) {
       (*this)[i] = static_cast<T>(v[i]);
     }
@@ -117,8 +119,8 @@ template <typename T, size_t Channels, size_t Height, size_t Width>
 struct Tensor : std::array<Matrix<T, Height, Width>, Channels> {
   using std::array<Matrix<T, Height, Width>, Channels>::array;
 
-  Tensor(const Tensor &t) = default;
-  Tensor(std::initializer_list<std::initializer_list<std::initializer_list<T>>> il) {
+  constexpr Tensor(const Tensor &t) = default;
+  constexpr Tensor(std::initializer_list<std::initializer_list<std::initializer_list<T>>> il) {
     size_t i = 0;
     for (const auto &c : il) {
       (*this)[i] = Matrix<T, Height, Width>(c);
