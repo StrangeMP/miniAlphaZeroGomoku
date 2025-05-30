@@ -12,23 +12,19 @@ using SCALE_T = float;
 using ZP_T = uint8_t;
 using WEIGHT_T = uint8_t;
 using BIAS_T = int32_t;
-constexpr int WEIGHT_MIN = std::numeric_limits<WEIGHT_T>::min();
-constexpr int WEIGHT_MAX = std::numeric_limits<WEIGHT_T>::max();
+inline constexpr int WEIGHT_MIN = std::numeric_limits<WEIGHT_T>::min();
+inline constexpr int WEIGHT_MAX = std::numeric_limits<WEIGHT_T>::max();
 
-template<typename T>
-constexpr int32_t const_round_half_away_from_zero(T val) {
-    // std::round behavior: rounds halves away from zero.
-    // e.g., 2.5f -> 3, -2.5f -> -3
-    // 0.0f -> 0
-    return (val >= 0.0f) ? static_cast<int32_t>(val + 0.5f) : static_cast<int32_t>(val - 0.5f);
+template <typename T> constexpr int32_t const_round_half_away_from_zero(T val) {
+  // std::round behavior: rounds halves away from zero.
+  // e.g., 2.5f -> 3, -2.5f -> -3
+  // 0.0f -> 0
+  return (val >= 0.0f) ? static_cast<int32_t>(val + 0.5f) : static_cast<int32_t>(val - 0.5f);
 }
-
 
 template <SCALE_T SCALE, ZP_T ZP> constexpr uint8_t quantize(SCALE_T x) {
   static_assert(SCALE != 0, "SCALE must not be zero");
-  return static_cast<WEIGHT_T>(std::clamp(static_cast<int32_t>(std::round(x / SCALE)) + ZP,
-                                          static_cast<int32_t>(std::numeric_limits<WEIGHT_T>::min()),
-                                          static_cast<int32_t>(std::numeric_limits<WEIGHT_T>::max())));
+  return static_cast<WEIGHT_T>(std::clamp(static_cast<int32_t>(std::round(x / SCALE)) + ZP, WEIGHT_MIN, WEIGHT_MAX));
 }
 
 template <SCALE_T SCALE, ZP_T ZP> constexpr SCALE_T dequantize(WEIGHT_T x) {
@@ -46,8 +42,8 @@ struct QLinearConv {
   constexpr QLinearConv(const Vec<Tensor<WEIGHT_T, InputChannels, KernelHeight, KernelWidth>, Filters> &weights_,
                         const Vec<BIAS_T, Filters> &biases_)
       : biases(biases_) {
-    for (size_t f = 0; f < Filters; ++f) {
-      for (size_t c = 0; c < InputChannels; ++c) {
+    for (int f = 0; f < Filters; ++f) {
+      for (int c = 0; c < InputChannels; ++c) {
         for (size_t kh = 0; kh < KernelHeight; ++kh) {
           for (size_t kw = 0; kw < KernelWidth; ++kw) {
             // Pre-subtract weight zero point
@@ -91,9 +87,9 @@ struct QLinearConv {
 
           // Apply bias and requantization
           auto prod = static_cast<double>(acc) * M;
-          _output[f][h][w] = std::clamp(static_cast<int>(std::round(prod)) + OutputZP,
-                                        static_cast<int>(std::numeric_limits<WEIGHT_T>::min()),
-                                        static_cast<int>(std::numeric_limits<WEIGHT_T>::max()));
+          _output[f][h][w] = std::clamp(static_cast<int32_t>(std::round(prod)) + OutputZP,
+                                        static_cast<int32_t>(std::numeric_limits<WEIGHT_T>::min()),
+                                        static_cast<int32_t>(std::numeric_limits<WEIGHT_T>::max()));
         }
       }
     }
@@ -112,13 +108,13 @@ struct QElemWise {
   static void add(InputTensor &a, const InputTensor &b) {
     static constexpr SCALE_T Sac = a_scale / c_scale;
     static constexpr SCALE_T Sbc = b_scale / c_scale;
-    for (size_t c = 0; c < C; ++c) {
-      for (size_t h = 0; h < H; ++h) {
-        for (size_t w = 0; w < W; ++w) {
+    for (int c = 0; c < C; ++c) {
+      for (int h = 0; h < H; ++h) {
+        for (int w = 0; w < W; ++w) {
           // C = (A_scale * (A - A_zero_point) + B_scale * (B - B_zero_point))/C_scale + C_zero_point
-          SCALE_T result =
-              static_cast<SCALE_T>(a[c][h][w] - a_zp) * Sac + static_cast<SCALE_T>(b[c][h][w] - b_zp) * Sbc;
-          int out_q = static_cast<int>(std::round(result)) + c_zp;
+          SCALE_T result = static_cast<SCALE_T>(static_cast<int32_t>(a[c][h][w]) - a_zp) * Sac +
+                           static_cast<SCALE_T>(static_cast<int32_t>(b[c][h][w]) - b_zp) * Sbc;
+          int32_t out_q = static_cast<int32_t>(std::round(result)) + c_zp;
           a[c][h][w] = static_cast<WEIGHT_T>(std::clamp(out_q, WEIGHT_MIN, WEIGHT_MAX));
         }
       }
@@ -128,12 +124,12 @@ struct QElemWise {
   static void mul(InputTensor &a, const InputTensor &b) {
     static constexpr SCALE_T M = a_scale * b_scale / c_scale;
 
-    for (size_t c = 0; c < C; ++c) {
-      for (size_t h = 0; h < H; ++h) {
-        for (size_t w = 0; w < W; ++w) {
-          int a_q = a[c][h][w] - a_zp;
-          int b_q = b[c][h][w] - b_zp;
-          SCALE_T prod = static_cast<SCALE_T>(a_q) * static_cast<SCALE_T>(b_q);
+    for (int c = 0; c < C; ++c) {
+      for (int h = 0; h < H; ++h) {
+        for (int w = 0; w < W; ++w) {
+          int32_t a_q = static_cast<int32_t>(a[c][h][w]) - a_zp;
+          int32_t b_q = static_cast<int32_t>(b[c][h][w]) - b_zp;
+          int32_t prod = a_q * b_q;
           int32_t out_q = static_cast<int32_t>(std::round(prod * M)) + c_zp;
           a[c][h][w] = static_cast<WEIGHT_T>(std::clamp(out_q, WEIGHT_MIN, WEIGHT_MAX));
         }
@@ -161,7 +157,7 @@ struct BNop {
     for (int w = 0; w < W; ++w) {
       for (int c = 0; c < C; c++) {
         for (int h = 0; h < H; ++h) {
-          int a_q = input[c][h][w] - a_zp;
+          int32_t a_q = input[c][h][w] - a_zp;
           SCALE_T prod = static_cast<SCALE_T>(a_q) * Constants[w];
           int32_t out_q = static_cast<int32_t>(std::round(prod)) + c_zp;
           input[c][h][w] = static_cast<WEIGHT_T>(std::clamp(out_q, WEIGHT_MIN, WEIGHT_MAX));
@@ -200,17 +196,17 @@ struct QGemm {
   OutputVector _output;
 
   constexpr QGemm(const Matrix<uint8_t, FlattenLen, Filters> &weights, const BiasVector &biases) : _biases(biases) {
-    for (size_t f = 0; f < Filters; ++f) {
-      for (size_t i = 0; i < FlattenLen; ++i) {
+    for (int f = 0; f < Filters; ++f) {
+      for (int i = 0; i < FlattenLen; ++i) {
         _weights_minus_wzp[i][f] = static_cast<int32_t>(weights[i][f]) - static_cast<int32_t>(b_zp);
       }
     }
   }
 
   void feed(const InputVector &vec) {
-    for (size_t j = 0; j < Filters; ++j) {
+    for (int j = 0; j < Filters; ++j) {
       int32_t acc = _biases[j];
-      for (size_t i = 0; i < FlattenLen; ++i) {
+      for (int i = 0; i < FlattenLen; ++i) {
         acc += static_cast<int32_t>(vec[i] - a_zp) * _weights_minus_wzp[i][j];
       }
       SCALE_T dequantized_acc_value = static_cast<SCALE_T>(acc) * (a_scale * b_scale);

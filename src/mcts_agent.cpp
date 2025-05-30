@@ -31,28 +31,15 @@ constexpr bool USE_DIRICHLET = false;    // 是否使用 Dirichlet 噪声
 constexpr int VIRTUAL_LOSS = 10;         // 虚拟损失
 constexpr int CAREFUL_STAGE = 6;         // 谨慎阶段
 
-// NN 配置 (新增自 usenet.cpp)
-constexpr int NN_INPUT_CHANNELS = 3; // NN 输入张量的通道数
-constexpr int NN_RES_FILTERS = 64;   // 示例: 残差块中的滤波器数量
-constexpr int NN_POLICY_FILTERS = 2; // 示例: 策略头卷积层中的滤波器数量
-constexpr int NN_VALUE_FILTERS = 1;  // 示例: 价值头卷积层中的滤波器数量
-constexpr int NN_RES_BLOCKS = 5;     // 示例: ResNet 中的残差块数量
-
 // 棋子表示
 WEIGHT_T EMPTY_STONE = AlphaGomoku::Black::Q_ZERO;
 WEIGHT_T BLACK_STONE = AlphaGomoku::Black::Q_ONE;
 WEIGHT_T WHITE_STONE = AlphaGomoku::Black::Q_NEG_ONE;
 } // namespace Config
 
-// 类型别名，用于 NN 和棋盘 (新增自 usenet.cpp)
-// 假设 Matrix, Tensor, AZNet 在包含的 compute.hpp/nnet.hpp 中定义
 using MatrixType = Matrix<WEIGHT_T, Config::BOARD_SIZE, Config::BOARD_SIZE>;
-// 假设 Tensor 有一个构造函数或方法来访问通道，例如 tensor.channel(i) 或 tensor.data_for_channel(i)
-// 目前，如果它是一个类似 3D 数组的结构或类似的，我们将假设直接访问，如 tensor[channel_idx]。
-// 如果 compute.hpp 对 Tensor 的定义不同，这部分需要匹配该定义。
-using InputTensor =
-    Tensor<WEIGHT_T, Config::NN_INPUT_CHANNELS, Config::BOARD_SIZE, Config::BOARD_SIZE>; // NN 输入是 float 类型
 using ActualNNType = AlphaGomoku::GodNet;
+using InputTensor = ActualNNType::InputTensor;
 
 // --- 实用函数 (来自 utils.py) ---
 namespace Utils {
@@ -227,7 +214,7 @@ struct Node : std::enable_shared_from_this<Node> {
 
       float score;
       if (children[i]) { // 如果子节点存在
-        score = children[i]->get_q_value() + children[i]->get_u_value(c_puct, current_node_total_visits);
+        score = -children[i]->get_q_value() + children[i]->get_u_value(c_puct, current_node_total_visits);
       } else { // 如果子节点不存在 (来自已扩展父节点的潜在走子)
         // 此节点 (父节点) 必须已扩展，才能填充 raw_nn_policy_for_children。
         if (is_expanded && !raw_nn_policy_for_children.empty()) {
@@ -308,11 +295,11 @@ float mcts_expand_and_evaluate(
 class MCTS_Agent {
 public:
   std::shared_ptr<Node> root;
-  WEIGHT_T agent_color;       // AI 的执棋颜色
-  float current_tau;        // 已改为 float 类型
-  AlphaGomoku::White::QuantizedNetwork net_w;       // 白棋视角的神经网络
-  AlphaGomoku::Black::QuantizedNetwork net_b;       // 黑棋视角下的神经网络
-  ActualNNType *active_net; // 指向当前使用的网络
+  WEIGHT_T agent_color;                       // AI 的执棋颜色
+  float current_tau;                          // 已改为 float 类型
+  AlphaGomoku::White::QuantizedNetwork net_w; // 白棋视角的神经网络
+  AlphaGomoku::Black::QuantizedNetwork net_b; // 黑棋视角下的神经网络
+  ActualNNType *active_net;                   // 指向当前使用的网络
 
   MCTS_Agent(WEIGHT_T player_color) : agent_color(player_color), current_tau(Config::INITIAL_TAU), active_net(nullptr) {
     MatrixType initial_board{}; // 零初始化
@@ -340,7 +327,8 @@ public:
   // 返回 GameEndStatus: {is_end, outcome_value for last_player_color}
   // last_action_coord: 导致当前棋盘状态的走子坐标
   // last_player_color: 做出该走子的玩家
-  GameEndStatus check_game_end(const MatrixType &board, Utils::Coordinate last_action_coord, WEIGHT_T last_player_color) {
+  GameEndStatus check_game_end(const MatrixType &board, Utils::Coordinate last_action_coord,
+                               WEIGHT_T last_player_color) {
     // 如果 last_player_color 是 EMPTY_STONE 或坐标无效，则无法根据最后一步走子确定获胜者。
     // 此函数假设 last_action_coord 是 last_player_color 刚落子的位置。
     if (last_player_color == Config::EMPTY_STONE || last_action_coord.r < 0 ||
@@ -624,7 +612,7 @@ void place_stone_on_board(MatrixType &board, int r, int c, WEIGHT_T &current_pla
 }
 
 WEIGHT_T ai_fixed_color = Config::BLACK_STONE; // AI固定的执棋颜色 (例如，总是执黑)
-MCTS_Agent agent(ai_fixed_color);            // 创建MCTS代理实例
+MCTS_Agent agent(ai_fixed_color);              // 创建MCTS代理实例
 int main() {
   std::ios_base::sync_with_stdio(false); // 关闭C++标准流与C标准流的同步，提高cin/cout效率
   std::cin.tie(NULL);                    // 解除cin与cout的绑定，进一步提高效率
@@ -634,10 +622,10 @@ int main() {
   bool ai_white_performed_swap = false;                   // 标记AI(白方)是否已经执行了换手操作
 
   // --- 全局游戏状态 ---
-  MatrixType game_board_state{};                              // 全局维护的棋盘状态
+  MatrixType game_board_state{};                                // 全局维护的棋盘状态
   WEIGHT_T player_for_next_move_on_board = Config::BLACK_STONE; // 全局维护的轮到下棋的玩家
-  int processed_requests_count = 0;                           // 已处理的requests数量
-  int processed_responses_count = 0;                          // 已处理的responses数量
+  int processed_requests_count = 0;                             // 已处理的requests数量
+  int processed_responses_count = 0;                            // 已处理的responses数量
   // --- 全局游戏状态结束 ---
 
   int turn_id_counter = 0; // 回合计数器
@@ -759,7 +747,7 @@ int main() {
     // turn_id_counter 用于换手逻辑中判断是否是第一/二回合等。
     turn_id_counter = current_total_responses;
 
-    MatrixType current_turn_board_state = game_board_state;                // 将当前维护的棋盘状态复制一份用于本回合决策
+    MatrixType current_turn_board_state = game_board_state; // 将当前维护的棋盘状态复制一份用于本回合决策
     WEIGHT_T player_for_next_move_this_turn = player_for_next_move_on_board; // 轮到下棋的玩家
     // --- 同步/增量更新棋盘状态结束 ---
 
