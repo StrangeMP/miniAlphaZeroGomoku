@@ -3,6 +3,7 @@
 #include "model_w_15_params.h"
 #include "qnnet.hpp"
 #include <algorithm>
+#include <array>
 #include <cstdint>
 
 namespace AlphaGomoku {
@@ -12,6 +13,7 @@ namespace AlphaGomoku {
     using RetType = std::pair<Vec<SCALE_T, 15 * 15>&, SCALE_T&>;
     virtual RetType feed(const InputTensor& input)  = 0;
     virtual RetType output() = 0;
+    virtual std::array<WEIGHT_T, 3> qstones() const = 0;
   };
 
 namespace Black {
@@ -30,7 +32,10 @@ public:
     RetType output() override{
       return  std::pair<Vec<SCALE_T, BOARD_SIZE * BOARD_SIZE>&, SCALE_T&>(pi, v);
     }
-    
+    std::array<WEIGHT_T, 3> qstones() const override {
+      return {Q_NEG_ONE,Q_ZERO, Q_ONE};
+    }
+
 private:
     // Network layers
     QLinearConv<input_scale, input_zero_point, functional_1_conv2d_1_convolution_ReadVariableOp_0_scale, functional_1_conv2d_1_convolution_ReadVariableOp_0_zero_point, functional_1_conv2d_1_BiasAdd_0_scale, functional_1_conv2d_1_BiasAdd_0_zero_point, /* Filters */ 32, /* InputChannels */ 3, /* InputHeight */ 15, /* InputWidth */ 15, /* KernelHeight */ 3, /* KernelWidth */ 3> functional_1_conv2d_1_BiasAdd_quant;
@@ -85,6 +90,9 @@ public:
     static constexpr size_t BOARD_SIZE = 15;
     RetType output() override{
       return  std::pair<Vec<SCALE_T, BOARD_SIZE * BOARD_SIZE>&, SCALE_T&>(pi, v);
+    }
+    std::array<WEIGHT_T, 3> qstones() const override {
+      return {Q_NEG_ONE,Q_ZERO, Q_ONE};
     }
     
 private:
