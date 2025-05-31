@@ -1,42 +1,42 @@
 #pragma once
+#include "compute.hpp"
 #include "model_b_15_params.h"
 #include "model_w_15_params.h"
 #include "qnnet.hpp"
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <utility>
 
 namespace AlphaGomoku {
-
-  struct GodNet {
-    using InputTensor = Tensor<uint8_t, 3, 15, 15>;
-    using RetType = std::pair<Vec<SCALE_T, 15 * 15>&, SCALE_T&>;
-    virtual RetType feed(const InputTensor& input)  = 0;
-    virtual RetType output() = 0;
-    virtual std::array<WEIGHT_T, 3> qstones() const = 0;
-  };
+enum STONE_COLOR { EMPTY = 0, BLACK = 1, WHITE = -1 };
+struct GodNet {
+  static constexpr size_t BOARD_SIZE = 15;
+  using InputTensor = Tensor<uint8_t, 3, BOARD_SIZE, BOARD_SIZE>;
+  using RetType = std::pair<Vec<SCALE_T, BOARD_SIZE * BOARD_SIZE> &, SCALE_T &>;
+  virtual RetType feed(const InputTensor &input) = 0;
+  virtual RetType output() = 0;
+  virtual std::array<WEIGHT_T, 2> qstones() const = 0;
+};
 
 namespace Black {
-    using namespace model_b_15_params;
-    inline constexpr WEIGHT_T Q_ZERO = model_w_15_params::input_zero_point;
-    inline constexpr WEIGHT_T Q_ONE = std::clamp(const_round_half_away_from_zero(1.0f/input_scale), WEIGHT_MIN, WEIGHT_MAX);
-    inline constexpr WEIGHT_T Q_NEG_ONE = std::clamp(const_round_half_away_from_zero(-1.0f/input_scale), WEIGHT_MIN, WEIGHT_MAX);
+using namespace model_b_15_params;
+inline constexpr WEIGHT_T Q_ZERO = model_w_15_params::input_zero_point;
+inline constexpr WEIGHT_T Q_ONE =
+    std::clamp(const_round_half_away_from_zero(1.0f / input_scale), WEIGHT_MIN, WEIGHT_MAX);
 
-  // Parameter declarations
+// Parameter declarations
 
 struct QuantizedNetwork : GodNet {
 public:
-    QuantizedNetwork();
-    RetType feed(const Tensor<uint8_t, 3, 15, 15>& input) override;
-    static constexpr size_t BOARD_SIZE = 15;
-    RetType output() override{
-      return  std::pair<Vec<SCALE_T, BOARD_SIZE * BOARD_SIZE>&, SCALE_T&>(pi, v);
-    }
-    std::array<WEIGHT_T, 3> qstones() const override {
-      return {Q_NEG_ONE,Q_ZERO, Q_ONE};
-    }
+  QuantizedNetwork();
+  RetType feed(const Tensor<uint8_t, 3, BOARD_SIZE, BOARD_SIZE> &input) override;
+  RetType output() override { return std::pair<Vec<SCALE_T, BOARD_SIZE * BOARD_SIZE> &, SCALE_T &>(pi, v); }
+  std::array<WEIGHT_T, 2> qstones() const override { return {Q_ZERO, Q_ONE}; }
 
-private:
+private: // clang-format off
     // Network layers
     QLinearConv<input_scale, input_zero_point, functional_1_conv2d_1_convolution_ReadVariableOp_0_scale, functional_1_conv2d_1_convolution_ReadVariableOp_0_zero_point, functional_1_conv2d_1_BiasAdd_0_scale, functional_1_conv2d_1_BiasAdd_0_zero_point, /* Filters */ 32, /* InputChannels */ 3, /* InputHeight */ 15, /* InputWidth */ 15, /* KernelHeight */ 3, /* KernelWidth */ 3> functional_1_conv2d_1_BiasAdd_quant;
     BNop</* a_scale */ functional_1_conv2d_1_BiasAdd_0_scale, /* a_zp */ functional_1_conv2d_1_BiasAdd_0_zero_point, /* b_scale */ functional_1_batch_normalization_1_batchnorm_mul_0_scale, /* b_zp */ functional_1_batch_normalization_1_batchnorm_mul_0_zero_point, /* c_scale */ functional_1_batch_normalization_1_batchnorm_mul_1_0_scale, /* c_zp */ functional_1_batch_normalization_1_batchnorm_mul_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ true> functional_1_batch_normalization_1_batchnorm_mul_1_quant;
@@ -68,34 +68,29 @@ private:
     QGemm</* a_scale */ functional_1_batch_normalization_7_1_batchnorm_add_1_0_scale, /* a_zp */ functional_1_batch_normalization_7_1_batchnorm_add_1_0_zero_point, /* b_scale */ functional_1_dense_3_Cast_ReadVariableOp_0_scale, /* b_zp */ functional_1_dense_3_Cast_ReadVariableOp_0_zero_point, /* c_scale */ functional_1_dense_3_BiasAdd_0_scale, /* c_zp */ functional_1_dense_3_BiasAdd_0_zero_point, /* FlattenLen */ 450, /* Filters */ 225, /* Requant */ false> gemm_quant;
     QGemm</* a_scale */ functional_1_batch_normalization_8_1_batchnorm_add_1_0_scale, /* a_zp */ functional_1_batch_normalization_8_1_batchnorm_add_1_0_zero_point, /* b_scale */ functional_1_dense_1_1_Cast_ReadVariableOp_0_scale, /* b_zp */ functional_1_dense_1_1_Cast_ReadVariableOp_0_zero_point, /* c_scale */ functional_1_dense_1_1_BiasAdd_0_scale, /* c_zp */ functional_1_dense_1_1_BiasAdd_0_zero_point, /* FlattenLen */ 225, /* Filters */ 32, /* Requant */ true> gemm_token_0_quant;
     QGemm</* a_scale */ functional_1_dense_1_1_BiasAdd_0_scale, /* a_zp */ functional_1_dense_1_1_BiasAdd_0_zero_point, /* b_scale */ functional_1_dense_2_1_Cast_ReadVariableOp_0_scale, /* b_zp */ functional_1_dense_2_1_Cast_ReadVariableOp_0_zero_point, /* c_scale */ functional_1_dense_2_1_Add_0_scale, /* c_zp */ functional_1_dense_2_1_Add_0_zero_point, /* FlattenLen */ 32, /* Filters */ 1, /* Requant */ false> gemm_token_1_quant;
-
-    Vec<SCALE_T, BOARD_SIZE * BOARD_SIZE> pi;
-    SCALE_T v;
+  // clang-format on
+  Vec<SCALE_T, BOARD_SIZE * BOARD_SIZE> pi;
+  SCALE_T v;
 };
 
 } // namespace Black
 
 namespace White {
-    using namespace model_w_15_params;
-    inline constexpr WEIGHT_T Q_ZERO = model_w_15_params::input_zero_point;
-    inline constexpr WEIGHT_T Q_ONE = std::clamp(const_round_half_away_from_zero(1.0f/input_scale), WEIGHT_MIN, WEIGHT_MAX);
-    inline constexpr WEIGHT_T Q_NEG_ONE = std::clamp(const_round_half_away_from_zero(-1.0f/input_scale), WEIGHT_MIN, WEIGHT_MAX);
+using namespace model_w_15_params;
+inline constexpr WEIGHT_T Q_ZERO = model_w_15_params::input_zero_point;
+inline constexpr WEIGHT_T Q_ONE =
+    std::clamp(const_round_half_away_from_zero(1.0f / input_scale), WEIGHT_MIN, WEIGHT_MAX);
 
-  // Parameter declarations
+// Parameter declarations
 
 struct QuantizedNetwork : GodNet {
 public:
-    QuantizedNetwork();
-    RetType feed(const Tensor<uint8_t, 3, 15, 15>& input) override;
-    static constexpr size_t BOARD_SIZE = 15;
-    RetType output() override{
-      return  std::pair<Vec<SCALE_T, BOARD_SIZE * BOARD_SIZE>&, SCALE_T&>(pi, v);
-    }
-    std::array<WEIGHT_T, 3> qstones() const override {
-      return {Q_NEG_ONE,Q_ZERO, Q_ONE};
-    }
-    
-private:
+  QuantizedNetwork();
+  RetType feed(const Tensor<uint8_t, 3, BOARD_SIZE, BOARD_SIZE> &input) override;
+  RetType output() override { return std::pair<Vec<SCALE_T, BOARD_SIZE * BOARD_SIZE> &, SCALE_T &>(pi, v); }
+  std::array<WEIGHT_T, 2> qstones() const override { return {Q_ZERO, Q_ONE}; }
+
+private: // clang-format off
     // Network layers
     QLinearConv<input_scale, input_zero_point, functional_1_1_conv2d_9_1_convolution_ReadVariableOp_0_scale, functional_1_1_conv2d_9_1_convolution_ReadVariableOp_0_zero_point, functional_1_1_conv2d_9_1_BiasAdd_0_scale, functional_1_1_conv2d_9_1_BiasAdd_0_zero_point, /* Filters */ 32, /* InputChannels */ 3, /* InputHeight */ 15, /* InputWidth */ 15, /* KernelHeight */ 3, /* KernelWidth */ 3> functional_1_1_conv2d_9_1_BiasAdd_quant;
     BNop</* a_scale */ functional_1_1_conv2d_9_1_BiasAdd_0_scale, /* a_zp */ functional_1_1_conv2d_9_1_BiasAdd_0_zero_point, /* b_scale */ functional_1_1_batch_normalization_9_1_batchnorm_mul_0_scale, /* b_zp */ functional_1_1_batch_normalization_9_1_batchnorm_mul_0_zero_point, /* c_scale */ functional_1_1_batch_normalization_9_1_batchnorm_mul_1_0_scale, /* c_zp */ functional_1_1_batch_normalization_9_1_batchnorm_mul_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ true> functional_1_1_batch_normalization_9_1_batchnorm_mul_1_quant;
@@ -127,11 +122,57 @@ private:
     QGemm</* a_scale */ functional_1_1_batch_normalization_17_1_batchnorm_add_1_0_scale, /* a_zp */ functional_1_1_batch_normalization_17_1_batchnorm_add_1_0_zero_point, /* b_scale */ functional_1_1_dense_4_1_Cast_ReadVariableOp_0_scale, /* b_zp */ functional_1_1_dense_4_1_Cast_ReadVariableOp_0_zero_point, /* c_scale */ functional_1_1_dense_4_1_BiasAdd_0_scale, /* c_zp */ functional_1_1_dense_4_1_BiasAdd_0_zero_point, /* FlattenLen */ 225, /* Filters */ 32, /* Requant */ true> gemm_quant;
     QGemm</* a_scale */ functional_1_1_batch_normalization_16_1_batchnorm_add_1_0_scale, /* a_zp */ functional_1_1_batch_normalization_16_1_batchnorm_add_1_0_zero_point, /* b_scale */ functional_1_1_dense_3_1_Cast_ReadVariableOp_0_scale, /* b_zp */ functional_1_1_dense_3_1_Cast_ReadVariableOp_0_zero_point, /* c_scale */ functional_1_1_dense_3_1_BiasAdd_0_scale, /* c_zp */ functional_1_1_dense_3_1_BiasAdd_0_zero_point, /* FlattenLen */ 450, /* Filters */ 225, /* Requant */ false> gemm_token_1_quant;
     QGemm</* a_scale */ functional_1_1_dense_4_1_BiasAdd_0_scale, /* a_zp */ functional_1_1_dense_4_1_BiasAdd_0_zero_point, /* b_scale */ functional_1_1_dense_5_1_Cast_ReadVariableOp_0_scale, /* b_zp */ functional_1_1_dense_5_1_Cast_ReadVariableOp_0_zero_point, /* c_scale */ functional_1_1_dense_5_1_Add_0_scale, /* c_zp */ functional_1_1_dense_5_1_Add_0_zero_point, /* FlattenLen */ 32, /* Filters */ 1, /* Requant */ false> gemm_token_0_quant;
+  // clang-format on
 
-    Vec<SCALE_T, BOARD_SIZE * BOARD_SIZE> pi;
-    SCALE_T v;
+  Vec<SCALE_T, BOARD_SIZE * BOARD_SIZE> pi;
+  SCALE_T v;
 };
 
 } // namespace White
+
+struct Network {
+  using InputTensor = GodNet::InputTensor;
+  using RetType = GodNet::RetType;
+  static constexpr size_t BOARD_SIZE = GodNet::BOARD_SIZE;
+  Black::QuantizedNetwork b_net;
+  White::QuantizedNetwork w_net;
+  Network() : b_net(), w_net() {}
+  RetType feed(const Matrix<STONE_COLOR, BOARD_SIZE, BOARD_SIZE> &board,
+               std::optional<std::pair<WEIGHT_T, WEIGHT_T>> last_move, STONE_COLOR net_color) {
+    InputTensor input = board2tensor(board, last_move, net_color);
+    GodNet &current_net =
+        (net_color == STONE_COLOR::BLACK) ? static_cast<GodNet &>(b_net) : static_cast<GodNet &>(w_net);
+    return current_net.feed(input);
+  }
+
+private:
+  InputTensor board2tensor(const Matrix<STONE_COLOR, BOARD_SIZE, BOARD_SIZE> &board,
+                           std::optional<std::pair<WEIGHT_T, WEIGHT_T>> last_move, STONE_COLOR net_color) {
+    InputTensor input;
+    GodNet &current_net =
+        (net_color == STONE_COLOR::BLACK) ? static_cast<GodNet &>(b_net) : static_cast<GodNet &>(w_net);
+    auto [zero, one] = current_net.qstones();
+    for (size_t i = 0; i < BOARD_SIZE; ++i) {
+      for (size_t j = 0; j < BOARD_SIZE; ++j) {
+        auto stone = board[i][j];
+        if (stone == EMPTY) {
+          input[0][i][j] = zero;
+          input[1][i][j] = zero;
+        } else if (stone == net_color) {
+          input[0][i][j] = one;
+          input[1][i][j] = zero;
+        } else {
+          input[0][i][j] = zero;
+          input[1][i][j] = one;
+        }
+        input[2][i][j] = zero;
+      }
+    }
+    if (last_move) {
+      auto [r, c] = *last_move;
+      input[2][r][c] = one;
+    }
+    return input;
+  }
+};
 } // namespace AlphaGomoku
-  
