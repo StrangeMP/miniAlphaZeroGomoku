@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
-#include <initializer_list>
 #include <numeric>
 #include <ostream>
 #include <string>
@@ -12,22 +11,6 @@
 #endif
 
 template <typename T, size_t L> struct Vec : std::array<T, L> {
-  Vec() = default;
-
-  using std::array<T, L>::array;
-  constexpr Vec(std::initializer_list<T> il) {
-    size_t i = 0;
-    for (const auto &v : il) {
-      (*this)[i] = v;
-      ++i;
-    }
-  }
-
-  template <typename U> constexpr Vec(const Vec<U, L> &v) {
-    for (size_t i = 0; i < L; ++i) {
-      (*this)[i] = static_cast<T>(v[i]);
-    }
-  }
 
   constexpr T dot(const Vec &v) const { return std::inner_product(this->begin(), this->end(), v.begin(), T{0}); }
 
@@ -83,16 +66,7 @@ template <typename T, size_t R, size_t C> struct Matrix : Vec<Vec<T, C>, R> {
     return static_cast<Matrix &>(Vec<Vec<T, C>, R>::operator=(m));
   }
 
-  using Vec<Vec<T, C>, R>::Vec;
   using Vec<Vec<T, C>, R>::operator=;
-
-  constexpr Matrix(std::initializer_list<std::initializer_list<T>> il) {
-    size_t i = 0;
-    for (const auto &r : il) {
-      (*this)[i] = Vec<T, C>(r);
-      ++i;
-    }
-  }
 
   constexpr Vec<T, R * C> flatten() const {
     Vec<T, R * C> r{};
@@ -117,16 +91,6 @@ template <typename T, size_t R, size_t C> std::ostream &operator<<(std::ostream 
 
 template <typename T, size_t Channels, size_t Height, size_t Width>
 struct Tensor : std::array<Matrix<T, Height, Width>, Channels> {
-  using std::array<Matrix<T, Height, Width>, Channels>::array;
-
-  constexpr Tensor(const Tensor &t) = default;
-  constexpr Tensor(std::initializer_list<std::initializer_list<std::initializer_list<T>>> il) {
-    size_t i = 0;
-    for (const auto &c : il) {
-      (*this)[i] = Matrix<T, Height, Width>(c);
-      ++i;
-    }
-  }
 
   using base = std::array<Matrix<T, Height, Width>, Channels>;
   Tensor &operator+=(const Tensor &t) {

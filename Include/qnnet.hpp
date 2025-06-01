@@ -152,12 +152,12 @@ template <SCALE_PTR pa_scale, ZP_T a_zp, SCALE_PTR pb_scale, ZP_T b_zp, SCALE_PT
 struct BNop {
   Vec<SCALE_T, W> Constants;
 
-  constexpr BNop(const Vec<WEIGHT_T, W> &constants) : Constants(constants) {
+  constexpr BNop(const Vec<WEIGHT_T, W> &constants) {
     static_assert(pa_scale != nullptr && pb_scale != nullptr && pc_scale != nullptr, "Scale pointers must not be null");
     static_assert(*pc_scale != 0, "c_scale must not be zero");
     constexpr SCALE_T M = IsMul ? (((*pa_scale) * (*pb_scale)) / (*pc_scale)) : ((*pb_scale) / (*pc_scale));
     for (int i = 0; i < constants.size(); ++i) {
-      SCALE_T b_val_minus_zp = Constants[i] - static_cast<SCALE_T>(b_zp); // Constants[i] is already float-cast of original weight
+      SCALE_T b_val_minus_zp = static_cast<SCALE_T>(constants[i]) - static_cast<SCALE_T>(b_zp); // Constants[i] is already float-cast of original weight
       Constants[i] = b_val_minus_zp * M;
     }
   }
