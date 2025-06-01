@@ -157,6 +157,7 @@ struct TensorWindow {
   TensorWindow(Tensor<T, Channels, Height, Width> &data, int row, int col, int dep)
       : data(&data), Row(row), Col(col), Dep(dep) {}
 
+#ifdef DEBUG
   void check_access(size_t depth, size_t row, size_t column) const {
     auto d = static_cast<int>(depth) + Dep;
     auto r = static_cast<int>(row) + Row;
@@ -171,6 +172,7 @@ struct TensorWindow {
       throw std::out_of_range(errmsg);
     }
   }
+#endif
 
   T &at(size_t depth, size_t row, size_t column) {
 #ifdef DEBUG

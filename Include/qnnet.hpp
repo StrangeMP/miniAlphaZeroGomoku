@@ -9,6 +9,7 @@
 #include <type_traits>
 
 using SCALE_T = float;
+using SCALE_PTR = const SCALE_T *;
 using ZP_T = uint8_t;
 using WEIGHT_T = uint8_t;
 using BIAS_T = int32_t;
@@ -22,16 +23,17 @@ template <typename T> constexpr int32_t const_round_half_away_from_zero(T val) {
   return (val >= 0.0f) ? static_cast<int32_t>(val + 0.5f) : static_cast<int32_t>(val - 0.5f);
 }
 
-template <SCALE_T SCALE, ZP_T ZP> constexpr uint8_t quantize(SCALE_T x) {
-  static_assert(SCALE != 0, "SCALE must not be zero");
-  return static_cast<WEIGHT_T>(std::clamp(static_cast<int32_t>(std::round(x / SCALE)) + ZP, WEIGHT_MIN, WEIGHT_MAX));
+template <SCALE_PTR pSCALE, ZP_T ZP> constexpr uint8_t quantize(SCALE_T x) {
+  static_assert(pSCALE != nullptr && *pSCALE != 0, "pSCALE must not be null and *pSCALE must not be zero");
+  return static_cast<WEIGHT_T>(std::clamp(static_cast<int32_t>(std::round(x / (*pSCALE))) + ZP, WEIGHT_MIN, WEIGHT_MAX));
 }
 
-template <SCALE_T SCALE, ZP_T ZP> constexpr SCALE_T dequantize(WEIGHT_T x) {
-  return (static_cast<SCALE_T>(x) - ZP) * SCALE;
+template <SCALE_PTR pSCALE, ZP_T ZP> constexpr SCALE_T dequantize(WEIGHT_T x) {
+  static_assert(pSCALE != nullptr, "pSCALE must not be null");
+  return (static_cast<SCALE_T>(x) - ZP) * (*pSCALE);
 }
 
-template <SCALE_T InputScale, ZP_T InputZP, SCALE_T WeightScale, ZP_T WeightZP, SCALE_T OutputScale, ZP_T OutputZP,
+template <SCALE_PTR pInputScale, ZP_T InputZP, SCALE_PTR pWeightScale, ZP_T WeightZP, SCALE_PTR pOutputScale, ZP_T OutputZP,
           size_t Filters, size_t InputChannels, size_t InputHeight, size_t InputWidth, size_t KernelHeight = 3,
           size_t KernelWidth = 3>
 struct QLinearConv {
@@ -58,7 +60,9 @@ struct QLinearConv {
   using InputTensor = Tensor<WEIGHT_T, InputChannels, InputHeight, InputWidth>;
 
   void feed(const InputTensor &input) {
-    static constexpr double M = (InputScale * WeightScale) / OutputScale;
+    static_assert(pInputScale != nullptr && pWeightScale != nullptr && pOutputScale != nullptr, "Scale pointers must not be null");
+    static_assert(*pOutputScale != 0, "OutputScale must not be zero");
+    static constexpr double M = ((*pInputScale) * (*pWeightScale)) / (*pOutputScale);
 
     constexpr int pad_h = KernelHeight / 2;
     constexpr int pad_w = KernelWidth / 2;
@@ -99,15 +103,17 @@ struct QLinearConv {
 };
 
 // QElemWise: Element-wise addition and multiplication on quantized tensors, inplace applied to the first operand.
-template <SCALE_T a_scale, ZP_T a_zp, SCALE_T b_scale, ZP_T b_zp, SCALE_T c_scale, ZP_T c_zp, size_t C, size_t H,
+template <SCALE_PTR pa_scale, ZP_T a_zp, SCALE_PTR pb_scale, ZP_T b_zp, SCALE_PTR pc_scale, ZP_T c_zp, size_t C, size_t H,
           size_t W>
 struct QElemWise {
   using InputTensor = Tensor<WEIGHT_T, C, H, W>;
   using OutputTensor = Tensor<WEIGHT_T, C, H, W>;
 
   static void add(InputTensor &a, const InputTensor &b) {
-    static constexpr SCALE_T Sac = a_scale / c_scale;
-    static constexpr SCALE_T Sbc = b_scale / c_scale;
+    static_assert(pa_scale != nullptr && pb_scale != nullptr && pc_scale != nullptr, "Scale pointers must not be null");
+    static_assert(*pc_scale != 0, "c_scale must not be zero");
+    static constexpr SCALE_T Sac = (*pa_scale) / (*pc_scale);
+    static constexpr SCALE_T Sbc = (*pb_scale) / (*pc_scale);
     for (int c = 0; c < C; ++c) {
       for (int h = 0; h < H; ++h) {
         for (int w = 0; w < W; ++w) {
@@ -122,7 +128,9 @@ struct QElemWise {
   }
 
   static void mul(InputTensor &a, const InputTensor &b) {
-    static constexpr SCALE_T M = a_scale * b_scale / c_scale;
+    static_assert(pa_scale != nullptr && pb_scale != nullptr && pc_scale != nullptr, "Scale pointers must not be null");
+    static_assert(*pc_scale != 0, "c_scale must not be zero");
+    static constexpr SCALE_T M = (*pa_scale) * (*pb_scale) / (*pc_scale);
 
     for (int c = 0; c < C; ++c) {
       for (int h = 0; h < H; ++h) {
@@ -139,15 +147,17 @@ struct QElemWise {
 };
 
 // BNop: Batch Normalization Operation, doing column wise tensor * scalar multiplication or addition
-template <SCALE_T a_scale, ZP_T a_zp, SCALE_T b_scale, ZP_T b_zp, SCALE_T c_scale, ZP_T c_zp, size_t C, size_t H,
+template <SCALE_PTR pa_scale, ZP_T a_zp, SCALE_PTR pb_scale, ZP_T b_zp, SCALE_PTR pc_scale, ZP_T c_zp, size_t C, size_t H,
           size_t W, bool IsMul = true>
 struct BNop {
   Vec<SCALE_T, W> Constants;
 
   constexpr BNop(const Vec<WEIGHT_T, W> &constants) : Constants(constants) {
-    constexpr SCALE_T M = IsMul ? (a_scale * b_scale / c_scale) : (b_scale / c_scale);
+    static_assert(pa_scale != nullptr && pb_scale != nullptr && pc_scale != nullptr, "Scale pointers must not be null");
+    static_assert(*pc_scale != 0, "c_scale must not be zero");
+    constexpr SCALE_T M = IsMul ? (((*pa_scale) * (*pb_scale)) / (*pc_scale)) : ((*pb_scale) / (*pc_scale));
     for (int i = 0; i < constants.size(); ++i) {
-      SCALE_T b_val_minus_zp = Constants[i] - static_cast<SCALE_T>(b_zp);
+      SCALE_T b_val_minus_zp = Constants[i] - static_cast<SCALE_T>(b_zp); // Constants[i] is already float-cast of original weight
       Constants[i] = b_val_minus_zp * M;
     }
   }
@@ -167,7 +177,9 @@ struct BNop {
   }
 
   void add(InputTensor &input) {
-    static constexpr SCALE_T Sac = a_scale / c_scale;
+    static_assert(pa_scale != nullptr && pc_scale != nullptr, "Scale pointers must not be null");
+    static_assert(*pc_scale != 0, "c_scale must not be zero");
+    static constexpr SCALE_T Sac = (*pa_scale) / (*pc_scale);
     for (int w = 0; w < W; ++w) {
       for (int c = 0; c < C; c++) {
         for (int h = 0; h < H; ++h) {
@@ -182,8 +194,8 @@ struct BNop {
 };
 
 // MatMul: Column-wise apply matrix multiplication on a weight matrix with a vector flattened from a tensor
-template <SCALE_T a_scale, ZP_T a_zp, SCALE_T b_scale, ZP_T b_zp, SCALE_T c_scale, ZP_T c_zp, size_t FlattenLen,
-          size_t Filters, bool Requant = true>
+template <SCALE_PTR pa_scale, ZP_T a_zp, SCALE_PTR pb_scale, ZP_T b_zp, SCALE_PTR pc_scale, ZP_T c_zp, size_t FlattenLen,
+          size_t Filters, bool Requant>
 struct QGemm {
   using InputVector = Vec<WEIGHT_T, FlattenLen>;
   using InputMatrix = Matrix<WEIGHT_T, FlattenLen, Filters>;
@@ -204,13 +216,22 @@ struct QGemm {
   }
 
   void feed(const InputVector &vec) {
+    static_assert(pa_scale != nullptr && pb_scale != nullptr, "a_scale and b_scale pointers must not be null");
+    if constexpr (Requant) {
+        static_assert(pc_scale != nullptr, "c_scale pointer must not be null for requantization");
+    }
+
     for (int j = 0; j < Filters; ++j) {
       int32_t acc = _biases[j];
       for (int i = 0; i < FlattenLen; ++i) {
         acc += static_cast<int32_t>(vec[i] - a_zp) * _weights_minus_wzp[i][j];
       }
-      SCALE_T dequantized_acc_value = static_cast<SCALE_T>(acc) * (a_scale * b_scale);
-      _output[j] = Requant ? quantize<c_scale, c_zp>(dequantized_acc_value) : dequantized_acc_value;
+      SCALE_T dequantized_acc_value = static_cast<SCALE_T>(acc) * ((*pa_scale) * (*pb_scale));
+      if constexpr (Requant) {
+        _output[j] = quantize<pc_scale, c_zp>(dequantized_acc_value);
+      } else {
+        _output[j] = dequantized_acc_value;
+      }
     }
   }
 
