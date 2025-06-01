@@ -30,13 +30,6 @@ constexpr bool USE_DIRICHLET = false;    // 是否使用 Dirichlet 噪声
 constexpr int VIRTUAL_LOSS = 10;         // 虚拟损失
 constexpr int CAREFUL_STAGE = 6;         // 谨慎阶段
 
-// NN 配置 (新增自 usenet.cpp)
-constexpr int NN_INPUT_CHANNELS = 3; // NN 输入张量的通道数
-constexpr int NN_RES_FILTERS = 64;   // 示例: 残差块中的滤波器数量
-constexpr int NN_POLICY_FILTERS = 2; // 示例: 策略头卷积层中的滤波器数量
-constexpr int NN_VALUE_FILTERS = 1;  // 示例: 价值头卷积层中的滤波器数量
-constexpr int NN_RES_BLOCKS = 5;     // 示例: ResNet 中的残差块数量
-
 // 棋子表示
 auto EMPTY_STONE = AlphaGomoku::EMPTY;
 auto BLACK_STONE = AlphaGomoku::BLACK;
@@ -49,9 +42,6 @@ using MatrixType = Matrix<AlphaGomoku::STONE_COLOR, Config::BOARD_SIZE, Config::
 // 假设 Tensor 有一个构造函数或方法来访问通道，例如 tensor.channel(i) 或 tensor.data_for_channel(i)
 // 目前，如果它是一个类似 3D 数组的结构或类似的，我们将假设直接访问，如 tensor[channel_idx]。
 // 如果 compute.hpp 对 Tensor 的定义不同，这部分需要匹配该定义。
-using InputTensor =
-    Tensor<WEIGHT_T, Config::NN_INPUT_CHANNELS, Config::BOARD_SIZE, Config::BOARD_SIZE>; // NN 输入是 float 类型
-using ActualNNType = AlphaGomoku::GodNet;
 
 // --- 实用函数 (来自 utils.py) ---
 namespace Utils {
