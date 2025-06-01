@@ -5,16 +5,13 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <functional>
 #include <iostream>
 #include <limits>
 #include <memory>
-#include <random>
 #include <string>
-#include <vector>
 using json = nlohmann::json; // 在全局作用域或 main 之前使用 using 声明
 
-// --- 配置参数 (来自 config.py 和 mcts.py) ---
+// --- 配置参数
 namespace Config {
 constexpr int BOARD_SIZE = 15; // 棋盘大小
 constexpr int BOARD_SQUARES = BOARD_SIZE * BOARD_SIZE;
@@ -22,13 +19,10 @@ constexpr int BOARD_SQUARES = BOARD_SIZE * BOARD_SIZE;
 // MCTS 超参数
 constexpr float C_PUCT = 5.0f;           // PUCT 常数 (已改为 float 类型)
 constexpr int SIMULATION_TIMES = 100;    // 模拟次数
-constexpr float INITIAL_TAU = 1.0f;      // 初始 tau (已改为 float 类型)
-constexpr float TAU_DECAY = 0.8f;        // tau 衰减 (来自 config.py 顶层) (已改为 float 类型)
-constexpr float EPSILON = 0.25f;         // epsilon (用于 Dirichlet 噪声) (已改为 float 类型)
-constexpr float ALPHA_DIRICHLET = 0.03f; // alpha (用于 Dirichlet 噪声) (已改为 float 类型)
-constexpr bool USE_DIRICHLET = false;    // 是否使用 Dirichlet 噪声
-constexpr int VIRTUAL_LOSS = 10;         // 虚拟损失
-constexpr int CAREFUL_STAGE = 6;         // 谨慎阶段
+//constexpr float INITIAL_TAU = 1.0f;      // 初始 tau (已改为 float 类型)
+//constexpr float TAU_DECAY = 0.8f;        // tau 衰减 (来自 config.py 顶层) (已改为 float 类型)
+//constexpr int VIRTUAL_LOSS = 10;         // 虚拟损失
+//constexpr int CAREFUL_STAGE = 6;         // 谨慎阶段
 
 // 棋子表示
 auto EMPTY_STONE = AlphaGomoku::EMPTY;
@@ -127,51 +121,12 @@ struct Node : std::enable_shared_from_this<Node> {
   // 选择最佳子节点 (PUCT 算法)
   // legal_moves_vec: 标记哪些动作是合法的
   std::pair<int, std::shared_ptr<Node>> select_child(float c_puct,
-                                                     const std::array<int, Config::BOARD_SQUARES> &legal_moves_vec) { // 已改为 std::array
+                                                     const std::array<int, Config::BOARD_SQUARES> &legal_moves_vec) {
     std::shared_ptr<Node> best_child = nullptr;
     int best_action_idx = -1;
-    float max_score = -std::numeric_limits<float>::infinity(); // 已改为 float 类型
+    float max_score = -std::numeric_limits<float>::infinity();
 
-    // 用于计算 *此* 节点子节点的 U 值的 parent_total_visits_for_children 是 this->visit_count
     int current_node_total_visits = this->visit_count;
-    if (current_node_total_visits == 0 && !is_expanded) {
-      // 节点尚未被访问/扩展，如果 SIMULATION_TIMES 为 0 或 1，根节点可能会发生这种情况。
-      // 或者，如果在刚创建但尚未评估的节点上调用 select_child。
-      // 后备方案：选择一个随机的合法走子或第一个合法走子。
-      // 理想情况下，这种情况应由 MCTS 循环处理：如果选择了一个节点并且它是叶节点，则会对其进行扩展。
-      // 如果是根节点且没有访问，则首先对其进行扩展。
-      for (int i = 0; i < Config::BOARD_SQUARES; ++i) {
-        if (legal_moves_vec[i]) {
-          // 如果节点未扩展且尚无策略，这是一个临时操作。
-          // MCTS 流程应确保在从子节点中选择之前进行扩展。
-          // 但是，如果强制选择，未扩展节点的子节点是未知的。
-          // 如果经常命中，这部分逻辑可能表示流程问题。
-          // 目前，假设如果此节点未扩展，我们尚不能选择子节点。
-          // 调用者应处理此问题 (例如，首先扩展此节点)。
-          // 或者，如果这是叶节点扩展 *之前* 的选择阶段：
-          // “子节点”是概念上的走子。
-          if (raw_nn_policy_for_children.empty() && is_leaf()) {
-            // 此节点是叶节点，其策略尚未评估。
-            // 这种情况应首先通过扩展当前节点来处理。
-            // 为确保鲁棒性，如果强制执行，则选择一个随机的合法走子。
-            std::vector<int> actual_legal_indices;
-            for (int k = 0; k < Config::BOARD_SQUARES; k++)
-              if (legal_moves_vec[k])
-                actual_legal_indices.push_back(k);
-            if (!actual_legal_indices.empty()) {
-              std::random_device rd_sel;
-              std::mt19937 gen_sel(rd_sel());
-              std::uniform_int_distribution<> distrib_sel(0, actual_legal_indices.size() - 1);
-              best_action_idx = actual_legal_indices[distrib_sel(gen_sel)];
-              // best_child 保持为 nullptr，因为它还不是真正的子节点
-              return {best_action_idx, nullptr};
-            } else {
-              return {-1, nullptr}; // 没有合法的走子
-            }
-          }
-        }
-      }
-    }
 
     for (int i = 0; i < Config::BOARD_SQUARES; ++i) {
       if (!legal_moves_vec[i])
@@ -181,50 +136,30 @@ struct Node : std::enable_shared_from_this<Node> {
       if (children[i]) { // 如果子节点存在
         score = children[i]->get_q_value() + children[i]->get_u_value(c_puct, current_node_total_visits);
       } else { // 如果子节点不存在 (来自已扩展父节点的潜在走子)
-        // 此节点 (父节点) 必须已扩展，才能填充 raw_nn_policy_for_children。
         if (is_expanded && !raw_nn_policy_for_children.empty()) {
-          float prior_p_for_action_i = raw_nn_policy_for_children[i];
-          // 对于未访问/未创建的节点，Q 值为 0。N(s,a) 为 0。
-          float u_value_for_action_i =
-              c_puct * prior_p_for_action_i * std::sqrt(static_cast<float>(current_node_total_visits)) / (1.0f + 0);
-          score = 0.0f + u_value_for_action_i;
+          // 确保索引 i 在 raw_nn_policy_for_children 的有效范围内
+          if (i < raw_nn_policy_for_children.size()) {
+             float prior_p_for_action_i = raw_nn_policy_for_children[i];
+             float u_value_for_action_i =
+                c_puct * prior_p_for_action_i * std::sqrt(static_cast<float>(current_node_total_visits)) / (1.0f + 0);
+             score = 0.0f + u_value_for_action_i;
+          } else {
+            // 如果索引越界，则不应发生，跳过此动作
+            continue;
+          }
         } else {
-          // 如果 MCTS 流程正确 (在从其策略中选择子节点之前扩展父节点)，则理想情况下不应命中此情况。
-          // 如果父节点未扩展，我们没有此动作的策略。
-          // 分配一个低分或作为错误处理。目前，跳过。
+          // 如果父节点未扩展或策略为空，则无法计算此潜在走子的分数，跳过。
           continue;
         }
       }
 
       if (score > max_score) {
         max_score = score;
-        best_child = children[i]; // 如果子节点尚不存在，则为 nullptr
+        best_child = children[i]; 
         best_action_idx = i;
       }
     }
 
-    if (best_action_idx == -1 && !legal_moves_vec.empty()) {
-      // 后备方案：如果没有选择有效的走子 (例如，所有得分均为 -inf，或者没有子节点且节点未扩展)
-      // 这表示存在问题或边缘情况 (例如，没有有效走子的平局状态，尽管那时 legal_moves_vec 应该为空)
-      // 或者，如果所有合法走子都导致某种程度上无效的评分状态。
-      // 为确保鲁棒性，选择一个随机的合法走子。
-      std::vector<int> actual_legal_indices;
-      for (int i = 0; i < Config::BOARD_SQUARES; ++i)
-        if (legal_moves_vec[i])
-          actual_legal_indices.push_back(i);
-      if (!actual_legal_indices.empty()) {
-        std::random_device rd_fall;
-        std::mt19937 gen_fall(rd_fall());
-        std::uniform_int_distribution<> distrib_fall(0, actual_legal_indices.size() - 1);
-        best_action_idx = actual_legal_indices[distrib_fall(gen_fall)];
-        best_child = children[best_action_idx]; // 可能为 nullptr
-      } else {
-        // std::cerr << "错误: select_child 中没有合法的走子可供选择!" << std::endl; // 保留错误用于调试
-        return {-1, nullptr}; // 完全没有合法的走子
-      }
-    }
-    // 如果 best_child 为 nullptr 但 best_action_idx 有效，则表示我们为未创建的子节点选择了一个动作。
-    // 调用者 (MCTS 循环) 随后将创建此子节点。
     return {best_action_idx, best_child};
   }
 
@@ -249,39 +184,22 @@ struct Node : std::enable_shared_from_this<Node> {
   bool is_leaf() const { return !is_expanded; }
 };
 
-// 向前声明
-float mcts_expand_and_evaluate(
-    std::shared_ptr<Node> node_to_expand,
-    AlphaGomoku::Network &agent_network, // 修改参数类型
-    // 传递一个可调用对象用于游戏结束检查
-    std::function<GameEndStatus(const MatrixType &, Utils::Coordinate, AlphaGomoku::STONE_COLOR)> check_game_end_func);
-
 // --- MCTS 类 (来自 mcts.py) ---
 class MCTS_Agent {
 public:
   std::shared_ptr<Node> root;
   AlphaGomoku::STONE_COLOR agent_color;       // AI 的执棋颜色
-  float current_tau;        // 已改为 float 类型
+  //float current_tau;        // 已改为 float 类型
   AlphaGomoku::Network net;
-  MCTS_Agent(AlphaGomoku::STONE_COLOR player_color) : agent_color(player_color), current_tau(Config::INITIAL_TAU), net() {
+  MCTS_Agent(AlphaGomoku::STONE_COLOR player_color) : agent_color(player_color), net() {
     MatrixType initial_board{}; // 零初始化
     root = std::make_shared<Node>(nullptr, 1.0f, Config::BLACK_STONE, initial_board, -1);
     //update_active_net(); 
   }
-  /*
-  void update_active_net() { 
-    if (agent_color == Config::WHITE_STONE) {
-      active_net = &net_w;
-    } else if (agent_color == Config::BLACK_STONE) {
-      active_net = &net_b;
-    } else {
-      throw std::invalid_argument("Unknown agent_color for MCTS_Agent: " + std::to_string(agent_color));
-    }
-  }
-  */
+
   void reset_tree_to_board(const MatrixType& board_state, AlphaGomoku::STONE_COLOR player_to_move) { 
     root = std::make_shared<Node>(nullptr, 1.0f, player_to_move, board_state, -1);
-    current_tau = Config::INITIAL_TAU;
+    //current_tau = Config::INITIAL_TAU;
   }
 
   void update_root_after_move(int action_idx, const MatrixType& new_board_state, AlphaGomoku::STONE_COLOR next_player_color) {
@@ -298,7 +216,7 @@ public:
 
   // predict_nn 已移除，mcts_expand_and_evaluate 处理 NN 调用。
 
-  // 检查游戏是否结束 (你需要彻底实现它)
+  // 检查游戏是否结束 
   // 返回 GameEndStatus: {is_end, outcome_value for last_player_color}
   // last_action_coord: 导致当前棋盘状态的走子坐标
   // last_player_color: 做出该走子的玩家
@@ -387,12 +305,17 @@ public:
   }
 
   // 执行一次 MCTS 模拟 (选择、扩展、评估、反向传播)
-  void run_one_simulation() {
-    // if (!net) { // 增加对 active_net 的检查 // This check might need review as net is an object.
-    //   std::cerr << "Error: Active network is not set in MCTS_Agent. Cannot run simulation." << std::endl;
-    //   return;
-    // }
+  void run_one_simulation(); // 保留现有声明
 
+  // 将 mcts_expand_and_evaluate 声明为成员函数
+  float mcts_expand_and_evaluate(std::shared_ptr<Node> node_to_expand);
+
+}; // MCTS_Agent 类
+
+// --- MCTS_Agent 方法实现 ---
+
+// 执行一次 MCTS 模拟 (选择、扩展、评估、反向传播)
+void MCTS_Agent::run_one_simulation() {
     std::shared_ptr<Node> current_node = root;
 
     // 1. 选择
@@ -463,26 +386,17 @@ public:
       // backup 函数会处理视角的转换，所以这里传递叶节点玩家视角的结果即可。
     } else {
       // 扩展叶节点
-      // leaf_value 是从 node_to_expand->color_to_play 的角度看的价值
-      leaf_value = mcts_expand_and_evaluate(current_node, this->net, // 修改处：使用 this->net
-                                            [this](const MatrixType &board, Utils::Coordinate coord, AlphaGomoku::STONE_COLOR color) {
-                                              return this->check_game_end(board, coord, color);
-                                            });
+      leaf_value = this->mcts_expand_and_evaluate(current_node); // 新的调用方式
     }
     // 3. 反向传播
     // mcts_expand_and_evaluate 返回的价值是从 current_node->color_to_play 的角度看的
     current_node->backup(leaf_value);
   }
 
-}; // MCTS_Agent 类
-
 // 函数：使用神经网络扩展叶节点，创建其子节点，
 // 并返回节点的评估值。
-// (新增，改编自 usenet.cpp)
-float mcts_expand_and_evaluate(
-    std::shared_ptr<Node> node_to_expand, // 确保定义处的参数名也一致
-    AlphaGomoku::Network &agent_network, // 修改参数类型
-    std::function<GameEndStatus(const MatrixType &, Utils::Coordinate, AlphaGomoku::STONE_COLOR)> check_game_end_func) {
+float MCTS_Agent::mcts_expand_and_evaluate( // 新的成员函数定义
+    std::shared_ptr<Node> node_to_expand) {
   AlphaGomoku::STONE_COLOR current_player_at_node = node_to_expand->color_to_play;
 
   Utils::Coordinate last_action_coord = {-1, -1};
@@ -500,8 +414,8 @@ float mcts_expand_and_evaluate(
   }
   // 否则，如果是根节点，则没有“上一步操作”导致它。
 
-  GameEndStatus end_status =
-      check_game_end_func(node_to_expand->board_state, last_action_coord, player_who_made_last_move);
+  // GameEndStatus end_status = check_game_end_func(node_to_expand->board_state, last_action_coord, player_who_made_last_move); // 旧的调用方式
+  GameEndStatus end_status = this->check_game_end(node_to_expand->board_state, last_action_coord, player_who_made_last_move); // 直接调用成员函数
 
   if (end_status.is_end) {
     node_to_expand->is_expanded = true; // 技术上已“评估”，即使未通过 NN
@@ -530,7 +444,8 @@ float mcts_expand_and_evaluate(
   }
 
   // 2. 通过 AlphaGomoku::Network 进行推理
-  auto nn_output_ref_pair = agent_network.feed(
+  // auto nn_output_ref_pair = agent_network.feed( // 旧的调用方式
+  auto nn_output_ref_pair = this->net.feed( // 直接使用成员变量 net
       node_to_expand->board_state,
       last_move_for_nn_feed_typed, // 使用转换后的类型
       current_player_at_node // current_player_at_node 已经是 STONE_COLOR
@@ -546,26 +461,7 @@ float mcts_expand_and_evaluate(
   node_to_expand->is_expanded = true;
 
   // 4. (可选) 创建子节点 - 当前实现在选择阶段按需创建
-
-  // 应用 Dirichlet 噪声 (如果启用且是根节点)
-  if (Config::USE_DIRICHLET && node_to_expand->parent == nullptr) {
-    Vec<float, Config::BOARD_SQUARES> dirichlet_noise{};
-    std::gamma_distribution<float> gamma(Config::ALPHA_DIRICHLET, 1.0f);
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    float sum_noise = 0.0f;
-    for (int i = 0; i < Config::BOARD_SQUARES; ++i) {
-      dirichlet_noise[i] = gamma(gen);
-      sum_noise += dirichlet_noise[i];
-    }
-    if (sum_noise > 0) { // 避免除以零
-      for (int i = 0; i < Config::BOARD_SQUARES; ++i) {
-        node_to_expand->raw_nn_policy_for_children[i] =
-            (1.0f - Config::EPSILON) * node_to_expand->raw_nn_policy_for_children[i] +
-            Config::EPSILON * (dirichlet_noise[i] / sum_noise);
-      }
-    }
-  }
+  // 这里不需要在扩展时创建子节点，因为它们将在选择阶段被创建。
 
   // 5. 返回从 NN 获得的评估值
   // 该值是从 current_player_at_node (即 node_to_expand->color_to_play) 的角度看的。
@@ -729,17 +625,8 @@ int main() {
                 ai_black_first_move_coord = ai_decision_move;
             }
         } else { 
-            std::vector<int> actual_legal_indices;
-            for(int i=0; i<Config::BOARD_SQUARES; ++i) if(legal_moves_for_root[i]) actual_legal_indices.push_back(i);
-            if(!actual_legal_indices.empty()){
-                std::random_device rd;
-                std::mt19937 gen(rd());
-                std::uniform_int_distribution<> distrib(0, actual_legal_indices.size() - 1);
-                best_action_idx_for_ai = actual_legal_indices[distrib(gen)];
-                ai_decision_move = Utils::index_to_coordinate(best_action_idx_for_ai, Config::BOARD_SIZE);
-            } else {
-                ai_decision_move = {-1, -1}; 
-                best_action_idx_for_ai = -1; 
+            if (best_action_idx_for_ai == -1) { // 确保如果上面没有找到移动，这里也不会意外地有一个旧值
+                 ai_decision_move = {-1, -1}; // 明确表示没有选择移动
             }
         }
     
