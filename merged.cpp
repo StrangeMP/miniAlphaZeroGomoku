@@ -23,6 +23,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <chrono>
 #ifdef DEBUG
 #include <format>
 #endif
@@ -44001,6 +44002,9 @@ constexpr int SIMULATION_TIMES = 100;    // 模拟次数
 //constexpr int VIRTUAL_LOSS = 10;         // 虚拟损失
 //constexpr int CAREFUL_STAGE = 6;         // 谨慎阶段
 
+constexpr double FORWARD_TIME_COST = 0.007;
+constexpr int TIME_FOR_SIMS = 985;
+
 // 棋子表示
 auto EMPTY_STONE = AlphaGomoku::EMPTY;
 auto BLACK_STONE = AlphaGomoku::BLACK;
@@ -44111,7 +44115,7 @@ struct Node : std::enable_shared_from_this<Node> {
 
       float score;
       if (children[i]) { // 如果子节点存在
-        score = children[i]->get_q_value() + children[i]->get_u_value(c_puct, current_node_total_visits);
+        score = - children[i]->get_q_value() + children[i]->get_u_value(c_puct, current_node_total_visits);
       } else { // 如果子节点不存在 (来自已扩展父节点的潜在走子)
         if (is_expanded && !raw_nn_policy_for_children.empty()) {
           // 确保索引 i 在 raw_nn_policy_for_children 的有效范围内
@@ -44447,180 +44451,141 @@ float MCTS_Agent::mcts_expand_and_evaluate( // 新的成员函数定义
 
 // Helper to place stone and switch player, used in board reconstruction
 // 用于棋盘重建的辅助函数，放置棋子并切换玩家
-void place_stone_on_board(MatrixType &board, int r, int c, AlphaGomoku::STONE_COLOR &current_player_color) {
+void place_stone_on_board(MatrixType &board, int r, int c, AlphaGomoku::STONE_COLOR current_player_color) {
   if (r >= 0 && r < Config::BOARD_SIZE && c >= 0 && c < Config::BOARD_SIZE) {
     if (board[r][c] == Config::EMPTY_STONE) { // 仅在空位时落子
       board[r][c] = current_player_color;
-      current_player_color = (current_player_color == Config::BLACK_STONE) ? Config::WHITE_STONE : Config::BLACK_STONE;
+      //current_player_color = (current_player_color == Config::BLACK_STONE) ? Config::WHITE_STONE : Config::BLACK_STONE;
     }
   }
 }
 
 MCTS_Agent agent(Config::BLACK_STONE);
 int main() {
-  std::ios_base::sync_with_stdio(false); 
-  std::cin.tie(NULL);                    
+  std::ios_base::sync_with_stdio(false);
+  std::cin.tie(NULL);
 
-  Utils::Coordinate ai_black_first_move_coord = {-1, -1}; 
-  bool opponent_requested_swap_vs_ai_black = false;       
-  bool ai_white_performed_swap = false;                   
+  Utils::Coordinate ai_black_first_move_coord = {-1, -1};
+  bool isSwap = false; // 对手是否请求交换 (黑棋先手时)
 
-  MatrixType game_board_state{};                              
-  AlphaGomoku::STONE_COLOR player_for_next_move_on_board = Config::BLACK_STONE; 
-  int processed_requests_count = 0;                           
-  int processed_responses_count = 0;                          
-  int turn_id_counter = 0; 
+  MatrixType game_board_state{};
+  AlphaGomoku::STONE_COLOR enemyColor = Config::BLACK_STONE;
+  int turn_id_counter = 0;
 
-  while (true) {                         
-    json response_json;                  
-    std::string line;                    
-    if (!std::getline(std::cin, line)) { 
-      break;                             
-    }
-    if (line.empty()) { 
-      continue;         
-    }
+  while (true) {
+    json response_json;
+    std::string line;
+    std::getline(std::cin, line);
+    json input_json = json::parse(line);
 
-    json input_json; 
-    try {
-        input_json = json::parse(line); 
-    } catch (const json::parse_error& e) {
-        // std::cerr << "JSON parse error: " << e.what() << std::endl;
-        continue; // Or handle error appropriately
+    Utils::Coordinate last_opponent_action_coord = {-2, -2};
+    int last_opponent_action_idx = -1;
+    // 检查是否有新的请求
+    // 用于长时运行
+    if (input_json.find("requests") != input_json.end()) {
+      last_opponent_action_coord = {input_json["requests"][0]["x"].get<int>(),
+                                    input_json["requests"][0]["y"].get<int>()};
+    } else {
+      last_opponent_action_coord = {input_json["x"].get<int>(), input_json["y"].get<int>()};
     }
-    
-    int current_total_requests = 0;
-    if (input_json.find("requests") != input_json.end() && input_json["requests"].is_array()) {
-        current_total_requests = input_json["requests"].size();
-    }
-    int current_total_responses = 0;
-    if (input_json.find("responses") != input_json.end() && input_json["responses"].is_array()){
-        current_total_responses = input_json["responses"].size();
+    if (last_opponent_action_coord.r != -1 && last_opponent_action_coord.c != -1) {
+      last_opponent_action_idx = Utils::coordinate_to_index(last_opponent_action_coord, Config::BOARD_SIZE);
+      place_stone_on_board(game_board_state, last_opponent_action_coord.r, last_opponent_action_coord.c, enemyColor);
+      agent.update_root_after_move(last_opponent_action_idx, game_board_state, agent.agent_color);
+
+    } else if (last_opponent_action_coord.r == -1 && last_opponent_action_coord.c == -1 && turn_id_counter != 0) {
+      last_opponent_action_coord = {-1, -1}; // 换手
     }
 
-
-    Utils::Coordinate last_opponent_action_coord = {-2, -2}; 
-    int last_opponent_action_idx = -1; 
-
-    if (current_total_requests > processed_requests_count) {
-      int new_request_idx = current_total_requests - 1; 
-      if (input_json["requests"][new_request_idx].count("x") &&
-          input_json["requests"][new_request_idx]["x"].get<int>() != -1) {
-        last_opponent_action_coord = {input_json["requests"][new_request_idx]["x"].get<int>(),
-                                input_json["requests"][new_request_idx]["y"].get<int>()};
-        last_opponent_action_idx = Utils::coordinate_to_index(last_opponent_action_coord, Config::BOARD_SIZE);
-        place_stone_on_board(game_board_state, last_opponent_action_coord.r, last_opponent_action_coord.c,
-                             player_for_next_move_on_board);
-        agent.update_root_after_move(last_opponent_action_idx, game_board_state, static_cast<AlphaGomoku::STONE_COLOR>(player_for_next_move_on_board));
-
-      } else if (input_json["requests"][new_request_idx].count("x") &&
-                 input_json["requests"][new_request_idx]["x"].get<int>() == -1 &&
-                 input_json["requests"][new_request_idx]["y"].get<int>() == -1) {
-        last_opponent_action_coord = {-1, -1};
-      }
-      processed_requests_count = current_total_requests;
+    // 处理先后手颜色
+    if (turn_id_counter == 0 && last_opponent_action_coord.r == -1 && last_opponent_action_coord.c == -1) {
+      agent.agent_color = Config::BLACK_STONE; // 我是黑棋
+      enemyColor = Config::WHITE_STONE;        // 对手是白棋
+    } else if (turn_id_counter == 0 && last_opponent_action_coord.r != -1 && last_opponent_action_coord.c != -1) {
+      agent.agent_color = Config::WHITE_STONE; // 我是白棋
+      enemyColor = Config::BLACK_STONE;        // 对手是黑棋
     }
-
-    turn_id_counter = current_total_responses;
-    AlphaGomoku::STONE_COLOR player_for_next_move_this_turn = player_for_next_move_on_board;
+    // 处理换手逻辑
+    bool ai_sends_swap_signal_this_turn = false; // AI 是否在本轮发送了换手信号
     Utils::Coordinate ai_decision_move = {-2, -2};
-    bool ai_sends_swap_signal_this_turn = false;  
-    bool agent_color_changed_this_turn = false; // Renamed for clarity
-
-    if (agent.agent_color == Config::BLACK_STONE && 
-        turn_id_counter == 0 &&                
-        last_opponent_action_coord.r != -1 &&        
-        last_opponent_action_coord.c != -1 &&
-        !opponent_requested_swap_vs_ai_black && 
-        !ai_white_performed_swap) {             
+    if (!isSwap && turn_id_counter == 1 && last_opponent_action_coord.r == -1 && last_opponent_action_coord.c == -1 &&
+        agent.agent_color == Config::BLACK_STONE) { // 处理对手换手
+      if (ai_black_first_move_coord.r != -1 && ai_black_first_move_coord.c != -1) {
         agent.agent_color = Config::WHITE_STONE;
-        // agent.update_active_net(); 
-        agent_color_changed_this_turn = true; 
-    }
-
-    if (!opponent_requested_swap_vs_ai_black && turn_id_counter == 1) { 
-            if (last_opponent_action_coord.r == -1 && last_opponent_action_coord.c == -1) { 
-                if (ai_black_first_move_coord.r != -1 && ai_black_first_move_coord.c != -1) { 
-                    agent.agent_color = Config::WHITE_STONE; 
-                    // agent.update_active_net(); 
-                    opponent_requested_swap_vs_ai_black = true; 
-                    player_for_next_move_this_turn = Config::WHITE_STONE; 
-                    player_for_next_move_on_board = Config::WHITE_STONE; 
-                    agent_color_changed_this_turn = true;
-                }
-            }
-    } else if (agent.agent_color == Config::WHITE_STONE && !ai_white_performed_swap) { 
-        if (turn_id_counter == 0 && player_for_next_move_this_turn == Config::WHITE_STONE) { 
-            if (last_opponent_action_coord.r != -1 && last_opponent_action_coord.c != -1) { 
-                ai_sends_swap_signal_this_turn = true; 
-                ai_decision_move = {-1, -1}; 
-                agent.agent_color = Config::BLACK_STONE;    
-                // agent.update_active_net(); 
-                ai_white_performed_swap = true;          
-                player_for_next_move_on_board = Config::WHITE_STONE;
-                agent_color_changed_this_turn = true; 
-            }
-         }
-    }
-        
-    if (agent_color_changed_this_turn) {
-        agent.reset_tree_to_board(game_board_state, player_for_next_move_on_board);
+        enemyColor = Config::BLACK_STONE;
+        isSwap = true;
+        // agent.reset_tree_to_board(game_board_state, Config::WHITE_STONE);
+      }
+    } else if (turn_id_counter == 0 && agent.agent_color == Config::WHITE_STONE && !isSwap) { // 处理我们换手
+      if (last_opponent_action_coord.r == 7 && last_opponent_action_coord.c == 7) {
+        ai_decision_move = {-1, -1};
+        agent.agent_color = Config::BLACK_STONE;
+        enemyColor = Config::WHITE_STONE;
+        isSwap = true;
+        ai_sends_swap_signal_this_turn = true; // AI 发送了换手信号
+      }
     }
 
     int best_action_idx_for_ai = -1; // Store AI's chosen action index
 
-    if (!ai_sends_swap_signal_this_turn) { 
-      //保底检查（根节点是不是当前棋盘状态）
-      // 如果 agent.root 已经是当前棋盘状态，则不需要重置。 
-      /*  
-      if (agent.root->board_state != game_board_state || agent.root->color_to_play != player_for_next_move_this_turn) {
-            agent.reset_tree_to_board(game_board_state, static_cast<AlphaGomoku::STONE_COLOR>(player_for_next_move_this_turn));
-        }
-      */
-        for (int sim = 0; sim < Config::SIMULATION_TIMES; ++sim) {
-            agent.run_one_simulation();
-        }
-
-        long long max_visits = -1; 
-        std::array<int, Config::BOARD_SQUARES> legal_moves_for_root =
-            Utils::board_to_legal_vec(agent.root->board_state); 
-        bool found_move = false;                               
-
-        for (int i = 0; i < Config::BOARD_SQUARES; ++i) {
-            if (agent.root->children[i] && legal_moves_for_root[i]) { 
-                if (agent.root->children[i]->visit_count > max_visits) {
-                    max_visits = agent.root->children[i]->visit_count;
-                    best_action_idx_for_ai = i; // Use the AI's action index variable
-                    found_move = true;
-                }
-            }
-        }
-      
-        if (found_move) { 
-            ai_decision_move = Utils::index_to_coordinate(best_action_idx_for_ai, Config::BOARD_SIZE);
-            if (agent.agent_color == Config::BLACK_STONE && turn_id_counter == 0 && !opponent_requested_swap_vs_ai_black && !ai_white_performed_swap) {
-                ai_black_first_move_coord = ai_decision_move;
-            }
-        } else { 
-            if (best_action_idx_for_ai == -1) { // 确保如果上面没有找到移动，这里也不会意外地有一个旧值
-                 ai_decision_move = {-1, -1}; // 明确表示没有选择移动
-            }
-        }
+    auto start_time = std::chrono::high_resolution_clock::now();
+    auto deadline = start_time + std::chrono::milliseconds(Config::TIME_FOR_SIMS); // Reserve 50ms buffer
     
-        if (ai_decision_move.r != -1) {
-            place_stone_on_board(game_board_state, ai_decision_move.r, ai_decision_move.c, player_for_next_move_on_board);
-            agent.update_root_after_move(best_action_idx_for_ai, game_board_state, static_cast<AlphaGomoku::STONE_COLOR>(player_for_next_move_on_board));
-        }
+    int count = 0;
+    while (true) {
+      auto current_time = std::chrono::high_resolution_clock::now();
+      auto time_remaining = std::chrono::duration_cast<std::chrono::duration<double>>(deadline - current_time).count();
+      
+      if (time_remaining < Config::FORWARD_TIME_COST) {
+        break;
+      }
+      
+      agent.run_one_simulation();
+      ++count;
     }
 
-    processed_responses_count++; 
+    long long max_visits = -1;
+    std::array<int, Config::BOARD_SQUARES> legal_moves_for_root = Utils::board_to_legal_vec(agent.root->board_state);
+    bool found_move = false;
 
-    response_json["response"]["x"] = ai_decision_move.r; 
-    response_json["response"]["y"] = ai_decision_move.c; 
-    std::cout << response_json.dump() << "\n"; 
+    for (int i = 0; i < Config::BOARD_SQUARES; ++i) {
+      if (agent.root->children[i] && legal_moves_for_root[i]) {
+        if (agent.root->children[i]->visit_count > max_visits) {
+          max_visits = agent.root->children[i]->visit_count;
+          best_action_idx_for_ai = i; // Use the AI's action index variable
+          found_move = true;
+        }
+      }
+    }
+    //
+    if (found_move && !ai_sends_swap_signal_this_turn) {
+
+      ai_decision_move = Utils::index_to_coordinate(best_action_idx_for_ai, Config::BOARD_SIZE);
+
+      // 如果 AI 是黑棋且是第一回合，记录 AI 的第一步
+      if (agent.agent_color == Config::BLACK_STONE && turn_id_counter == 0 && !isSwap) {
+        ai_black_first_move_coord = ai_decision_move;
+      }
+
+      if (ai_decision_move.r != -1) {
+        place_stone_on_board(game_board_state, ai_decision_move.r, ai_decision_move.c, agent.agent_color);
+        agent.update_root_after_move(best_action_idx_for_ai, game_board_state, enemyColor);
+      }
+    }
+
+    turn_id_counter++; // 增加回合计数器
+    std::ostringstream oss;
+    oss << "Complteted " << count << " simulations in "
+        << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start_time).count()
+        << " ms.";
+
+    response_json["response"]["x"] = ai_decision_move.r;
+    response_json["response"]["y"] = ai_decision_move.c;
+    response_json["debug"] = oss.str();
+    std::cout << response_json.dump() << "\n";
     std::cout << "\n>>>BOTZONE_REQUEST_KEEP_RUNNING<<<\n"; // Uncomment if required by platform
-    std::cout << std::flush; // Ensure output is sent
+    std::cout << std::flush;                               // Ensure output is sent
   }
 
-  return 0; 
+  return 0;
 }
