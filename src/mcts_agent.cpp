@@ -513,11 +513,11 @@ int main() {
     }
     
     int current_total_requests = 0;
-    if (input_json.contains("requests") && input_json["requests"].is_array()) {
+    if (input_json.find("requests") != input_json.end() && input_json["requests"].is_array()) {
         current_total_requests = input_json["requests"].size();
     }
     int current_total_responses = 0;
-    if (input_json.contains("responses") && input_json["responses"].is_array()){
+    if (input_json.find("responses") != input_json.end() && input_json["responses"].is_array()){
         current_total_responses = input_json["responses"].size();
     }
 
@@ -640,7 +640,7 @@ int main() {
 
     response_json["response"]["x"] = ai_decision_move.r; 
     response_json["response"]["y"] = ai_decision_move.c; 
-    //std::cout << response_json.dump() << std::endl; 
+    std::cout << response_json.dump() << std::endl; 
     std::cout << ">>>BOTZONE_REQUEST_KEEP_RUNNING<<<" << std::endl; // Uncomment if required by platform
     std::cout << std::flush; // Ensure output is sent
   }
