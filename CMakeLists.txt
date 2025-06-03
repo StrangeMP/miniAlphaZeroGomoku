@@ -6,11 +6,12 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 # Include directories
-include_directories(Include, tensorflow)
+include_directories(Include)
 
 # Add source files
 set(SOURCES
-    src/mcts_agent.cpp
+    src/main.cpp
+    src/network.cpp
     test/test.cpp
 )
 
