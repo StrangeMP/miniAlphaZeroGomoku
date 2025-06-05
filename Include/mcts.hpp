@@ -1,3 +1,4 @@
+#pragma once
 #include "compute.hpp"
 #include "config.hpp"
 #include "network.hpp"
@@ -178,13 +179,11 @@ private:
 };
 
 struct MCTS_Agent {
-  std::unique_ptr<Node> root;
   AlphaGomoku::Network &net;
+  std::unique_ptr<Node> root;
 
   MCTS_Agent(const Board &initial_board, AlphaGomoku::STONE_COLOR player_color, AlphaGomoku::Network &network)
-      : net(network) {
-    root = std::make_unique<Node>(nullptr, 1.0f, player_color, initial_board, -1, net);
-  }
+      : net(network), root(std::make_unique<Node>(nullptr, 1.0f, player_color, initial_board, -1, net)) {}
 
   MCTS_Agent(MCTS_Agent &&other) : net(other.net), root(std::move(other.root)) {}
 
@@ -205,6 +204,8 @@ struct MCTS_Agent {
     }
     node->backpropagate();
   }
+
+  int last_move_idx() const { return root->prior_action_idx; }
 
   int next_move_idx() const {
     int max_visits = -1;
@@ -228,5 +229,6 @@ struct MCTS_Agent {
   }
 
   AlphaGomoku::STONE_COLOR last_move_color() const { return root->current_color; }
+  AlphaGomoku::STONE_COLOR next_move_color() const { return root->opponent_color; }
   const Board &last_move_board() const { return root->board_state; }
 }; // MCTS_Agent

@@ -1,3 +1,4 @@
+#pragma once
 #include "network.hpp"
 namespace Config {
 inline constexpr int BOARD_SIZE = 15;
