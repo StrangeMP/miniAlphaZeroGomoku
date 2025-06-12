@@ -82,7 +82,6 @@ auto parse_request() {
 
 MCTS_Agent handle_first_turn(AlphaGomoku::Network &net) {
   Utils::Coordinate first_move = parse_request();
-  AlphaGomoku::STONE_COLOR player_color;
   auto is_first_move_around_center = [](const Utils::Coordinate move) {
     if (move.first == -1)
       return false; // Invalid move
@@ -91,55 +90,19 @@ MCTS_Agent handle_first_turn(AlphaGomoku::Network &net) {
     int dy = std::abs(move.second - center);
     return dx <= 2 && dy <= 2; // Within 2 squares of center
   };
+  AlphaGomoku::STONE_COLOR player_color = AlphaGomoku::STONE_COLOR::BLACK;
+  MCTS_Agent agent(Board{}, player_color, net);
+  auto decision_info = get_next_move(agent);
   if (first_move.first == -1) { // We are playing black
-    player_color = AlphaGomoku::STONE_COLOR::BLACK;
-
-    // If current player is BLACK, pick a random position around the center, avoid placing at center
-    std::mt19937 gen(std::random_device{}());
-    std::uniform_int_distribution<int> dist_radius(1, 3);
-    static constexpr auto pi = 3.141592653589793238462643383279502;
-    ;
-    std::uniform_real_distribution<double> dist_angle(0.0, 2 * pi);
-
-    int center = Config::BOARD_SIZE / 2;
-    int radius = dist_radius(gen);
-    double angle = dist_angle(gen);
-
-    auto ceil_abs = [](double val) { return val >= 0 ? std::ceil(val) : std::floor(val); };
-
-    int x = center + static_cast<int>(ceil_abs(radius * std::cos(angle)));
-    int y = center + static_cast<int>(ceil_abs(radius * std::sin(angle)));
-
-    // Clamp to board boundaries
-    x = std::max(0, std::min(x, Config::BOARD_SIZE - 1));
-    y = std::max(0, std::min(y, Config::BOARD_SIZE - 1));
-    MCTS_Agent agent(Board{}, player_color, net);
-    auto decision_info = get_next_move(agent);
-    decision_info.action = {x, y};
     agent.apply_move(Utils::coordinate_to_index(decision_info.action));
-    response(std::move(decision_info));
-    return agent;
   } else { // we are playing white
-    if (is_first_move_around_center(first_move)) { // 换手
-      player_color = AlphaGomoku::STONE_COLOR::BLACK;
-      MCTS_Agent agent(Board{}, player_color, net);
-      auto decision_info = get_next_move(agent);
-      agent.apply_move(Utils::coordinate_to_index(first_move));
-      decision_info.action = {-1, -1};
-      decision_info.heuristic_info = "[DEBUG] 黑方第一手在中心附近，换手; ";
-      response(std::move(decision_info));
-      return agent;
-    } else {
-      Board initial_board{};
-      initial_board[first_move.first][first_move.second] = AlphaGomoku::STONE_COLOR::BLACK;
-      player_color = AlphaGomoku::STONE_COLOR::WHITE;
-      MCTS_Agent agent(initial_board, player_color, net);
-      auto decision_info = get_next_move(agent);
-      agent.apply_move(Utils::coordinate_to_index(decision_info.action));
-      response(std::move(decision_info));
-      return agent;
-    }
+    agent.apply_move(Utils::coordinate_to_index(first_move));
+    // always swap our color to have the first move
+    decision_info.action = {-1, -1};
+    decision_info.heuristic_info = "换手; ";
   }
+  response(std::move(decision_info));
+  return agent;
 }
 
 void handle_second_turn(MCTS_Agent &agent) {
