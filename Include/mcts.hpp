@@ -4,6 +4,7 @@
 #include "network.hpp"
 #include "qnnet.hpp"
 #include "utils.hpp"
+#include "searchhelpers.hpp"
 #include <array>
 #include <cmath>
 #include <limits>
@@ -60,9 +61,9 @@ struct Node {
       is_end_node = true;
       value = game_result;
     } else {
-      auto [pi_, v_] = net.feed(board_state, last_move, current_color);
-      pi = pi_;
-      value = v_;
+      auto result = net.feed(board_state, last_move, current_color);
+      pi = result.first;
+      value = result.second;
     }
   }
 
@@ -79,15 +80,56 @@ struct Node {
     int best_action_idx = -1;
     float max_score = -std::numeric_limits<float>::infinity();
 
-    int current_node_total_visits = this->visit_count;
+    // 计算搜索统计信息
+    SearchHelpers::SearchStats parentStats;
+    SearchHelpers::updateSearchStats(parentStats, *this);
+    
+    // 计算已访问策略质量
+    float policyProbMassVisited = 0.0f;
+    float totalChildWeight = 0.0f;
+    for (int i = 0; i < Config::BOARD_SQUARES; ++i) {
+      if (!legal_moves_vec[i] || children[i] == nullptr) continue;
+      policyProbMassVisited += pi[i];
+      totalChildWeight += static_cast<float>(children[i]->visit_count);
+    }
+    policyProbMassVisited = std::min(1.0f, policyProbMassVisited);
+    
+    // 使用 FPU 参数（可以配置）
+    SearchHelpers::FPUParams fpuParams;
+    fpuParams.fpuReductionMax = 0.2f;
+    fpuParams.cpuctExploration = Config::C_PUCT;
+    
+    // 计算 FPU 值
+    float fpuValue = SearchHelpers::calculateFPUValue(
+      parentStats, policyProbMassVisited, current_color, fpuParams, false
+    );
+    
+    // 计算探索缩放
+    float parentUtilityStdevFactor = 1.0f + 0.1f * (parentStats.utilityStdev / 0.02f - 1.0f);
+    float exploreScaling = SearchHelpers::calculateExploreScaling(
+      totalChildWeight, parentUtilityStdevFactor, fpuParams
+    );
 
     for (int i = 0; i < Config::BOARD_SQUARES; ++i) {
-      if (!legal_moves_vec[i])
-        continue;
+      if (!legal_moves_vec[i]) continue;
 
-      float score = (children[i] != nullptr)
-                        ? child_score(*children[i].get())
-                        : Config::C_PUCT * pi[i] * std::sqrt(static_cast<float>(current_node_total_visits));
+      float score;
+      if (children[i] != nullptr) {
+        // 已存在的子节点：计算其选择价值
+        float childUtility = children[i]->visit_count > 0 
+          ? -(children[i]->value_sum / static_cast<float>(children[i]->visit_count))
+          : fpuValue;
+        float childWeight = static_cast<float>(children[i]->visit_count);
+        
+        score = SearchHelpers::calculateExploreSelectionValue(
+          exploreScaling, pi[i], childWeight, childUtility, current_color
+        );
+      } else {
+        // 新子节点：使用 FPU 值
+        score = SearchHelpers::calculateNewChildSelectionValue(
+          exploreScaling, pi[i], fpuValue
+        );
+      }
 
       if (score > max_score) {
         max_score = score;
