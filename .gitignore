@@ -2,3 +2,6 @@
 *.exe
 *.o
 test/
+.*/
+build/
+engine/

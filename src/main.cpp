@@ -1,4 +1,5 @@
 #include "network.hpp"
+#include "utils.hpp"
 #include <random>
 #include <tuple>
 #ifdef _BOTZONE_ONLINE
@@ -6,7 +7,6 @@
 #else
 #include "json.hpp"
 #endif
-#include "heuristic.hpp"
 #include "mcts.hpp"
 #include <chrono>
 #include <cstddef>
@@ -18,7 +18,7 @@
 using json = nlohmann::json;
 
 struct DecisionInfo {
-  Utils::Coordinate action;
+  Utils::Coord action;
   int sim_count;
   long long elapsed_time;
   std::string heuristic_info;
@@ -60,8 +60,8 @@ auto get_next_move(MCTS_Agent &agent) {
   auto [sim_count, elapsed] = simulate(agent);
   auto [heuristic_move_idx, heuristic_info] =
       make_heuristic_decision(agent.last_move_board(), agent.last_move_color(), agent.next_move_color(),
-                              agent.next_move_idx(), Utils::legal_moves(agent.last_move_board()), agent);
-  return DecisionInfo{Utils::index_to_coordinate(heuristic_move_idx), sim_count, elapsed, std::move(heuristic_info)};
+                              agent.next_move_idx(), legal_moves(agent.last_move_board()), agent);
+  return DecisionInfo{index_to_coordinate(heuristic_move_idx), sim_count, elapsed, std::move(heuristic_info)};
 }
 
 auto parse_request() {
@@ -69,7 +69,7 @@ auto parse_request() {
   std::getline(std::cin, line);
   json input_json = json::parse(line);
 
-  Utils::Coordinate action;
+  Utils::Coord action;
 
   if (input_json.find("requests") != input_json.end()) {
     action = {input_json["requests"][0]["x"].get<int>(), input_json["requests"][0]["y"].get<int>()};
@@ -80,9 +80,9 @@ auto parse_request() {
   return action;
 }
 
-MCTS_Agent handle_first_turn(AlphaGomoku::Network &net) {
-  Utils::Coordinate first_move = parse_request();
-  auto is_first_move_around_center = [](const Utils::Coordinate move) {
+MCTS_Agent handle_first_turn(Network &net) {
+  Utils::Coord first_move = parse_request();
+  auto is_first_move_around_center = [](const Utils::Coord move) {
     if (move.first == -1)
       return false; // Invalid move
     int center = Config::BOARD_SIZE / 2;
@@ -90,13 +90,13 @@ MCTS_Agent handle_first_turn(AlphaGomoku::Network &net) {
     int dy = std::abs(move.second - center);
     return dx <= 2 && dy <= 2; // Within 2 squares of center
   };
-  AlphaGomoku::STONE_COLOR player_color = AlphaGomoku::STONE_COLOR::BLACK;
-  MCTS_Agent agent(Board{}, player_color, net);
+  Utils::STONE_COLOR player_color = Utils::BLACK;
+  MCTS_Agent agent(Utils::Board{}, player_color, net);
   auto decision_info = get_next_move(agent);
-  if (first_move.first == -1) { // We are playing black
-    agent.apply_move(Utils::coordinate_to_index(decision_info.action));
+  if (first_move.first == -1) { // We are playing Utils::Black
+    agent.apply_move(coordinate_to_index(decision_info.action));
   } else { // we are playing white
-    agent.apply_move(Utils::coordinate_to_index(first_move));
+    agent.apply_move(coordinate_to_index(first_move));
     // always swap our color to have the first move
     decision_info.action = {-1, -1};
     decision_info.heuristic_info = "换手; ";
@@ -107,15 +107,15 @@ MCTS_Agent handle_first_turn(AlphaGomoku::Network &net) {
 
 void handle_second_turn(MCTS_Agent &agent) {
   auto move = parse_request();
-  if (!(agent.next_move_color() == AlphaGomoku::STONE_COLOR::BLACK && move.first == -1)) {
-    agent.apply_move(Utils::coordinate_to_index(move));
+  if (!(agent.next_move_color() == Utils::BLACK && move.first == -1)) {
+    agent.apply_move(coordinate_to_index(move));
   }
   auto decision_info = get_next_move(agent);
-  agent.apply_move(Utils::coordinate_to_index(decision_info.action));
+  agent.apply_move(coordinate_to_index(decision_info.action));
   response(std::move(decision_info));
 }
 
-AlphaGomoku::Network net;
+Network net;
 int main() {
   std::ios_base::sync_with_stdio(false);
   std::cin.tie(NULL);
@@ -125,9 +125,9 @@ int main() {
 
   while (true) {
     auto move = parse_request();
-    agent.apply_move(Utils::coordinate_to_index(move));
+    agent.apply_move(coordinate_to_index(move));
     auto decision_info = get_next_move(agent);
-    agent.apply_move(Utils::coordinate_to_index(decision_info.action));
+    agent.apply_move(coordinate_to_index(decision_info.action));
     response(std::move(decision_info));
   }
   return 0;

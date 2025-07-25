@@ -3,6 +3,7 @@
 #include "config.hpp"
 #include "network.hpp"
 #include "qnnet.hpp"
+#include "utils.hpp"
 #include <array>
 #include <cmath>
 #include <limits>
@@ -11,52 +12,46 @@
 #include <tuple>
 #include <utility>
 
-using Board = Matrix<AlphaGomoku::STONE_COLOR, Config::BOARD_SIZE, Config::BOARD_SIZE>;
+inline Utils::Coord index_to_coordinate(int index) { return {index / Config::BOARD_SIZE, index % Config::BOARD_SIZE}; }
 
-namespace Utils {
-using Coordinate = std::pair<int, int>; // (row, column)
+inline int coordinate_to_index(Utils::Coord coord) { return coord.first * Config::BOARD_SIZE + coord.second; }
 
-inline Coordinate index_to_coordinate(int index) { return {index / Config::BOARD_SIZE, index % Config::BOARD_SIZE}; }
-
-inline int coordinate_to_index(Coordinate coord) { return coord.first * Config::BOARD_SIZE + coord.second; }
-
-inline auto legal_moves(const Board &board) {
+inline auto legal_moves(const Utils::Board &board) {
   std::array<bool, Config::BOARD_SQUARES> legal_vec;
   for (int i = 0; i < Config::BOARD_SQUARES; ++i) {
     auto [r, c] = index_to_coordinate(i);
-    legal_vec[i] = (board[r][c] == Config::EMPTY_STONE);
+    legal_vec[i] = (board[r][c] == Utils::EMPTY);
   }
   return legal_vec;
 }
-} // namespace Utils
 
 struct Node {
   Node *parent;
-  AlphaGomoku::STONE_COLOR current_color;
-  AlphaGomoku::STONE_COLOR opponent_color;
+  Utils::STONE_COLOR current_color;
+  Utils::STONE_COLOR opponent_color;
   float prior_p;
   int visit_count = 0;
   float value_sum = 0.0f;
   bool is_end_node = false;
 
-  Board board_state;
+  Utils::Board board_state;
   std::array<std::unique_ptr<Node>, Config::BOARD_SQUARES> children;
 
   int prior_action_idx;
   Vec<float, Config::BOARD_SQUARES> pi;
   float value = 0.0f; // from value head of the network, or game result if this is an end node
 
-  Node(Node *parent_, float prior, AlphaGomoku::STONE_COLOR turn, const Board &current_board, int action_idx, auto &net)
+  Node(Node *parent_, float prior, Utils::STONE_COLOR turn, const Utils::Board &current_board, int action_idx, auto &net)
       : parent(parent_), current_color(turn),
-        opponent_color(turn == Config::BLACK_STONE ? Config::WHITE_STONE : Config::BLACK_STONE), prior_p(prior),
+        opponent_color(turn == Utils::BLACK ? Utils::WHITE : Utils::BLACK), prior_p(prior),
         board_state(current_board), prior_action_idx(action_idx) {
 
     std::optional<std::pair<WEIGHT_T, WEIGHT_T>> last_move = {};
     bool game_ended = false;
     float game_result = 0.0f;
-    if (prior_action_idx != -1) { // this is not the initial board node
-      auto [r, c] = Utils::index_to_coordinate(prior_action_idx);
-      board_state[r][c] = opponent_color; // apply the move to the board state
+    if (prior_action_idx != -1) { // this is not the initial Utils::Board node
+      auto [r, c] = index_to_coordinate(prior_action_idx);
+      board_state[r][c] = opponent_color; // apply the move to the Utils::Board state
       last_move = {r, c};
       std::tie(game_ended, game_result) = ended();
     }
@@ -79,7 +74,7 @@ struct Node {
   }
 
   std::pair<int, Node *> select_child() const {
-    auto legal_moves_vec = Utils::legal_moves(board_state);
+    auto legal_moves_vec = legal_moves(board_state);
     Node *best_child = nullptr;
     int best_action_idx = -1;
     float max_score = -std::numeric_limits<float>::infinity();
@@ -119,7 +114,7 @@ private:
   // {has_ended, game_result_if_end}
   std::pair<bool, float> ended() const {
     const int B_SIZE = Config::BOARD_SIZE;
-    const auto [R, C] = Utils::index_to_coordinate(prior_action_idx);
+    const auto [R, C] = index_to_coordinate(prior_action_idx);
     static constexpr int STONES_TO_WIN = 5;
     // 方向：水平、垂直、对角线 (左上到右下)、反对角线 (右上到左下)
     const int dr[] = {0, 1, 1, 1};  // 行增量
@@ -159,7 +154,7 @@ private:
     bool board_full = true;
     for (int r = 0; r < B_SIZE; ++r) {
       for (int c = 0; c < B_SIZE; ++c) {
-        if (board_state[r][c] == Config::EMPTY_STONE) {
+        if (board_state[r][c] == Utils::EMPTY) {
           board_full = false;
           break;
         }
@@ -179,10 +174,10 @@ private:
 };
 
 struct MCTS_Agent {
-  AlphaGomoku::Network &net;
+  Network &net;
   std::unique_ptr<Node> root;
 
-  MCTS_Agent(const Board &initial_board, AlphaGomoku::STONE_COLOR player_color, AlphaGomoku::Network &network)
+  MCTS_Agent(const Utils::Board &initial_board, Utils::STONE_COLOR player_color, Network &network)
       : net(network), root(std::make_unique<Node>(nullptr, 1.0f, player_color, initial_board, -1, net)) {}
 
   MCTS_Agent(MCTS_Agent &&other) : net(other.net), root(std::move(other.root)) {}
@@ -228,7 +223,7 @@ struct MCTS_Agent {
     root->parent = nullptr; // reset parent to nullptr for the new root
   }
 
-  AlphaGomoku::STONE_COLOR last_move_color() const { return root->current_color; }
-  AlphaGomoku::STONE_COLOR next_move_color() const { return root->opponent_color; }
-  const Board &last_move_board() const { return root->board_state; }
+  Utils::STONE_COLOR last_move_color() const { return root->current_color; }
+  Utils::STONE_COLOR next_move_color() const { return root->opponent_color; }
+  const Utils::Board &last_move_board() const { return root->board_state; }
 }; // MCTS_Agent

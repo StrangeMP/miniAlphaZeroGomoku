@@ -1,177 +1,46 @@
 #pragma once
 #include "compute.hpp"
-#include "model_b_15_params.h"
-#include "model_w_15_params.h"
-#include "qnnet.hpp"
-#include <algorithm>
-#include <array>
+#include "utils.hpp"
 #include <cstddef>
-#include <cstdint>
-#include <optional>
+#include <cuda_runtime.h>
+#include <memory>
+#include <tuple>
 #include <utility>
 
-namespace AlphaGomoku {
-enum STONE_COLOR { EMPTY = 0, BLACK = 1, WHITE = -1 };
-struct GodNet {
-  static constexpr size_t BOARD_SIZE = 15;
-  using InputTensor = Tensor<uint8_t, 3, BOARD_SIZE, BOARD_SIZE>;
-  using RetType = std::pair<Vec<SCALE_T, BOARD_SIZE * BOARD_SIZE> &, SCALE_T &>;
-  virtual RetType feed(const InputTensor &input) = 0;
-  virtual RetType output() = 0;
-  virtual std::array<WEIGHT_T, 2> qstones() const = 0;
-};
-
-namespace Black {
-using namespace model_b_15_params;
-inline constexpr WEIGHT_T Q_ZERO = model_w_15_params::input_zero_point;
-inline constexpr WEIGHT_T Q_ONE =
-    std::clamp(const_round_half_away_from_zero(1.0f / input_scale), WEIGHT_MIN, WEIGHT_MAX);
-
-// Parameter declarations
-
-struct QuantizedNetwork : GodNet {
-public:
-  QuantizedNetwork();
-  RetType feed(const Tensor<uint8_t, 3, BOARD_SIZE, BOARD_SIZE> &input) override;
-  RetType output() override { return std::pair<Vec<SCALE_T, BOARD_SIZE * BOARD_SIZE> &, SCALE_T &>(pi, v); }
-  std::array<WEIGHT_T, 2> qstones() const override { return {Q_ZERO, Q_ONE}; }
-
-private: // clang-format off
-  // Network layers 
-  QLinearConv</* InputScale */ &input_scale, /* InputZP */ input_zero_point, /* WeightScale */ &functional_1_conv2d_1_convolution_ReadVariableOp_0_scale, /* WeightZP */ functional_1_conv2d_1_convolution_ReadVariableOp_0_zero_point, /* OutputScale */ &functional_1_conv2d_1_BiasAdd_0_scale, /* OutputZP */ functional_1_conv2d_1_BiasAdd_0_zero_point, /* Filters */ 32, /* InputChannels */ 3, /* InputHeight */ 15, /* InputWidth */ 15, /* KernelHeight */ 3, /* KernelWidth */ 3> functional_1_conv2d_1_BiasAdd_quant;
-  BNop</* a_scale */ &functional_1_conv2d_1_BiasAdd_0_scale, /* a_zp */ functional_1_conv2d_1_BiasAdd_0_zero_point, /* b_scale */ &functional_1_batch_normalization_1_batchnorm_mul_0_scale, /* b_zp */ functional_1_batch_normalization_1_batchnorm_mul_0_zero_point, /* c_scale */ &functional_1_batch_normalization_1_batchnorm_mul_1_0_scale, /* c_zp */ functional_1_batch_normalization_1_batchnorm_mul_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ true> functional_1_batch_normalization_1_batchnorm_mul_1_quant;
-  BNop</* a_scale */ &functional_1_batch_normalization_1_batchnorm_mul_1_0_scale, /* a_zp */ functional_1_batch_normalization_1_batchnorm_mul_1_0_zero_point, /* b_scale */ &functional_1_batch_normalization_1_batchnorm_sub_0_scale, /* b_zp */ functional_1_batch_normalization_1_batchnorm_sub_0_zero_point, /* c_scale */ &functional_1_batch_normalization_1_batchnorm_add_1_0_scale, /* c_zp */ functional_1_batch_normalization_1_batchnorm_add_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ false> functional_1_batch_normalization_1_batchnorm_add_1_quant;
-  QLinearConv</* InputScale */ &functional_1_batch_normalization_1_batchnorm_add_1_0_scale, /* InputZP */ functional_1_batch_normalization_1_batchnorm_add_1_0_zero_point, /* WeightScale */ &functional_1_conv2d_1_2_convolution_ReadVariableOp_0_scale, /* WeightZP */ functional_1_conv2d_1_2_convolution_ReadVariableOp_0_zero_point, /* OutputScale */ &functional_1_conv2d_1_2_BiasAdd_0_scale, /* OutputZP */ functional_1_conv2d_1_2_BiasAdd_0_zero_point, /* Filters */ 32, /* InputChannels */ 32, /* InputHeight */ 15, /* InputWidth */ 15, /* KernelHeight */ 3, /* KernelWidth */ 3> functional_1_conv2d_1_2_BiasAdd_quant;
-  BNop</* a_scale */ &functional_1_conv2d_1_2_BiasAdd_0_scale, /* a_zp */ functional_1_conv2d_1_2_BiasAdd_0_zero_point, /* b_scale */ &functional_1_batch_normalization_1_2_batchnorm_mul_0_scale, /* b_zp */ functional_1_batch_normalization_1_2_batchnorm_mul_0_zero_point, /* c_scale */ &functional_1_batch_normalization_1_2_batchnorm_mul_1_0_scale, /* c_zp */ functional_1_batch_normalization_1_2_batchnorm_mul_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ true> functional_1_batch_normalization_1_2_batchnorm_mul_1_quant;
-  BNop</* a_scale */ &functional_1_batch_normalization_1_2_batchnorm_mul_1_0_scale, /* a_zp */ functional_1_batch_normalization_1_2_batchnorm_mul_1_0_zero_point, /* b_scale */ &functional_1_batch_normalization_1_2_batchnorm_sub_0_scale, /* b_zp */ functional_1_batch_normalization_1_2_batchnorm_sub_0_zero_point, /* c_scale */ &functional_1_batch_normalization_1_2_batchnorm_add_1_0_scale, /* c_zp */ functional_1_batch_normalization_1_2_batchnorm_add_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ false> functional_1_batch_normalization_1_2_batchnorm_add_1_quant;
-  QLinearConv</* InputScale */ &functional_1_batch_normalization_1_2_batchnorm_add_1_0_scale, /* InputZP */ functional_1_batch_normalization_1_2_batchnorm_add_1_0_zero_point, /* WeightScale */ &functional_1_conv2d_2_1_convolution_ReadVariableOp_0_scale, /* WeightZP */ functional_1_conv2d_2_1_convolution_ReadVariableOp_0_zero_point, /* OutputScale */ &functional_1_conv2d_2_1_BiasAdd_0_scale, /* OutputZP */ functional_1_conv2d_2_1_BiasAdd_0_zero_point, /* Filters */ 32, /* InputChannels */ 32, /* InputHeight */ 15, /* InputWidth */ 15, /* KernelHeight */ 3, /* KernelWidth */ 3> functional_1_conv2d_2_1_BiasAdd_quant;
-  BNop</* a_scale */ &functional_1_conv2d_2_1_BiasAdd_0_scale, /* a_zp */ functional_1_conv2d_2_1_BiasAdd_0_zero_point, /* b_scale */ &functional_1_batch_normalization_2_1_batchnorm_mul_0_scale, /* b_zp */ functional_1_batch_normalization_2_1_batchnorm_mul_0_zero_point, /* c_scale */ &functional_1_batch_normalization_2_1_batchnorm_mul_1_0_scale, /* c_zp */ functional_1_batch_normalization_2_1_batchnorm_mul_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ true> functional_1_batch_normalization_2_1_batchnorm_mul_1_quant;
-  BNop</* a_scale */ &functional_1_batch_normalization_2_1_batchnorm_mul_1_0_scale, /* a_zp */ functional_1_batch_normalization_2_1_batchnorm_mul_1_0_zero_point, /* b_scale */ &functional_1_batch_normalization_2_1_batchnorm_sub_0_scale, /* b_zp */ functional_1_batch_normalization_2_1_batchnorm_sub_0_zero_point, /* c_scale */ &functional_1_batch_normalization_2_1_batchnorm_add_1_0_scale, /* c_zp */ functional_1_batch_normalization_2_1_batchnorm_add_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ false> functional_1_batch_normalization_2_1_batchnorm_add_1_quant;
-  QLinearConv</* InputScale */ &functional_1_add_1_Add_0_scale, /* InputZP */ functional_1_add_1_Add_0_zero_point, /* WeightScale */ &functional_1_conv2d_3_1_convolution_ReadVariableOp_0_scale, /* WeightZP */ functional_1_conv2d_3_1_convolution_ReadVariableOp_0_zero_point, /* OutputScale */ &functional_1_conv2d_3_1_BiasAdd_0_scale, /* OutputZP */ functional_1_conv2d_3_1_BiasAdd_0_zero_point, /* Filters */ 32, /* InputChannels */ 32, /* InputHeight */ 15, /* InputWidth */ 15, /* KernelHeight */ 3, /* KernelWidth */ 3> functional_1_conv2d_3_1_BiasAdd_quant;
-  BNop</* a_scale */ &functional_1_conv2d_3_1_BiasAdd_0_scale, /* a_zp */ functional_1_conv2d_3_1_BiasAdd_0_zero_point, /* b_scale */ &functional_1_batch_normalization_3_1_batchnorm_mul_0_scale, /* b_zp */ functional_1_batch_normalization_3_1_batchnorm_mul_0_zero_point, /* c_scale */ &functional_1_batch_normalization_3_1_batchnorm_mul_1_0_scale, /* c_zp */ functional_1_batch_normalization_3_1_batchnorm_mul_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ true> functional_1_batch_normalization_3_1_batchnorm_mul_1_quant;
-  BNop</* a_scale */ &functional_1_batch_normalization_3_1_batchnorm_mul_1_0_scale, /* a_zp */ functional_1_batch_normalization_3_1_batchnorm_mul_1_0_zero_point, /* b_scale */ &functional_1_batch_normalization_3_1_batchnorm_sub_0_scale, /* b_zp */ functional_1_batch_normalization_3_1_batchnorm_sub_0_zero_point, /* c_scale */ &functional_1_batch_normalization_3_1_batchnorm_add_1_0_scale, /* c_zp */ functional_1_batch_normalization_3_1_batchnorm_add_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ false> functional_1_batch_normalization_3_1_batchnorm_add_1_quant;
-  QLinearConv</* InputScale */ &functional_1_batch_normalization_3_1_batchnorm_add_1_0_scale, /* InputZP */ functional_1_batch_normalization_3_1_batchnorm_add_1_0_zero_point, /* WeightScale */ &functional_1_conv2d_4_1_convolution_ReadVariableOp_0_scale, /* WeightZP */ functional_1_conv2d_4_1_convolution_ReadVariableOp_0_zero_point, /* OutputScale */ &functional_1_conv2d_4_1_BiasAdd_0_scale, /* OutputZP */ functional_1_conv2d_4_1_BiasAdd_0_zero_point, /* Filters */ 32, /* InputChannels */ 32, /* InputHeight */ 15, /* InputWidth */ 15, /* KernelHeight */ 3, /* KernelWidth */ 3> functional_1_conv2d_4_1_BiasAdd_quant;
-  BNop</* a_scale */ &functional_1_conv2d_4_1_BiasAdd_0_scale, /* a_zp */ functional_1_conv2d_4_1_BiasAdd_0_zero_point, /* b_scale */ &functional_1_batch_normalization_4_1_batchnorm_mul_0_scale, /* b_zp */ functional_1_batch_normalization_4_1_batchnorm_mul_0_zero_point, /* c_scale */ &functional_1_batch_normalization_4_1_batchnorm_mul_1_0_scale, /* c_zp */ functional_1_batch_normalization_4_1_batchnorm_mul_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ true> functional_1_batch_normalization_4_1_batchnorm_mul_1_quant;
-  BNop</* a_scale */ &functional_1_batch_normalization_4_1_batchnorm_mul_1_0_scale, /* a_zp */ functional_1_batch_normalization_4_1_batchnorm_mul_1_0_zero_point, /* b_scale */ &functional_1_batch_normalization_4_1_batchnorm_sub_0_scale, /* b_zp */ functional_1_batch_normalization_4_1_batchnorm_sub_0_zero_point, /* c_scale */ &functional_1_batch_normalization_4_1_batchnorm_add_1_0_scale, /* c_zp */ functional_1_batch_normalization_4_1_batchnorm_add_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ false> functional_1_batch_normalization_4_1_batchnorm_add_1_quant;
-  QLinearConv</* InputScale */ &functional_1_add_1_2_Add_0_scale, /* InputZP */ functional_1_add_1_2_Add_0_zero_point, /* WeightScale */ &functional_1_conv2d_5_1_convolution_ReadVariableOp_0_scale, /* WeightZP */ functional_1_conv2d_5_1_convolution_ReadVariableOp_0_zero_point, /* OutputScale */ &functional_1_conv2d_5_1_BiasAdd_0_scale, /* OutputZP */ functional_1_conv2d_5_1_BiasAdd_0_zero_point, /* Filters */ 32, /* InputChannels */ 32, /* InputHeight */ 15, /* InputWidth */ 15, /* KernelHeight */ 3, /* KernelWidth */ 3> functional_1_conv2d_5_1_BiasAdd_quant;
-  BNop</* a_scale */ &functional_1_conv2d_5_1_BiasAdd_0_scale, /* a_zp */ functional_1_conv2d_5_1_BiasAdd_0_zero_point, /* b_scale */ &functional_1_batch_normalization_5_1_batchnorm_mul_0_scale, /* b_zp */ functional_1_batch_normalization_5_1_batchnorm_mul_0_zero_point, /* c_scale */ &functional_1_batch_normalization_5_1_batchnorm_mul_1_0_scale, /* c_zp */ functional_1_batch_normalization_5_1_batchnorm_mul_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ true> functional_1_batch_normalization_5_1_batchnorm_mul_1_quant;
-  BNop</* a_scale */ &functional_1_batch_normalization_5_1_batchnorm_mul_1_0_scale, /* a_zp */ functional_1_batch_normalization_5_1_batchnorm_mul_1_0_zero_point, /* b_scale */ &functional_1_batch_normalization_5_1_batchnorm_sub_0_scale, /* b_zp */ functional_1_batch_normalization_5_1_batchnorm_sub_0_zero_point, /* c_scale */ &functional_1_batch_normalization_5_1_batchnorm_add_1_0_scale, /* c_zp */ functional_1_batch_normalization_5_1_batchnorm_add_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ false> functional_1_batch_normalization_5_1_batchnorm_add_1_quant;
-  QLinearConv</* InputScale */ &functional_1_batch_normalization_5_1_batchnorm_add_1_0_scale, /* InputZP */ functional_1_batch_normalization_5_1_batchnorm_add_1_0_zero_point, /* WeightScale */ &functional_1_conv2d_6_1_convolution_ReadVariableOp_0_scale, /* WeightZP */ functional_1_conv2d_6_1_convolution_ReadVariableOp_0_zero_point, /* OutputScale */ &functional_1_conv2d_6_1_BiasAdd_0_scale, /* OutputZP */ functional_1_conv2d_6_1_BiasAdd_0_zero_point, /* Filters */ 32, /* InputChannels */ 32, /* InputHeight */ 15, /* InputWidth */ 15, /* KernelHeight */ 3, /* KernelWidth */ 3> functional_1_conv2d_6_1_BiasAdd_quant;
-  BNop</* a_scale */ &functional_1_conv2d_6_1_BiasAdd_0_scale, /* a_zp */ functional_1_conv2d_6_1_BiasAdd_0_zero_point, /* b_scale */ &functional_1_batch_normalization_6_1_batchnorm_mul_0_scale, /* b_zp */ functional_1_batch_normalization_6_1_batchnorm_mul_0_zero_point, /* c_scale */ &functional_1_batch_normalization_6_1_batchnorm_mul_1_0_scale, /* c_zp */ functional_1_batch_normalization_6_1_batchnorm_mul_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ true> functional_1_batch_normalization_6_1_batchnorm_mul_1_quant;
-  BNop</* a_scale */ &functional_1_batch_normalization_6_1_batchnorm_mul_1_0_scale, /* a_zp */ functional_1_batch_normalization_6_1_batchnorm_mul_1_0_zero_point, /* b_scale */ &functional_1_batch_normalization_6_1_batchnorm_sub_0_scale, /* b_zp */ functional_1_batch_normalization_6_1_batchnorm_sub_0_zero_point, /* c_scale */ &functional_1_batch_normalization_6_1_batchnorm_add_1_0_scale, /* c_zp */ functional_1_batch_normalization_6_1_batchnorm_add_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ false> functional_1_batch_normalization_6_1_batchnorm_add_1_quant;
-  QLinearConv</* InputScale */ &functional_1_add_2_1_Add_0_scale, /* InputZP */ functional_1_add_2_1_Add_0_zero_point, /* WeightScale */ &functional_1_conv2d_7_1_convolution_ReadVariableOp_0_scale, /* WeightZP */ functional_1_conv2d_7_1_convolution_ReadVariableOp_0_zero_point, /* OutputScale */ &functional_1_conv2d_7_1_BiasAdd_0_scale, /* OutputZP */ functional_1_conv2d_7_1_BiasAdd_0_zero_point, /* Filters */ 2, /* InputChannels */ 32, /* InputHeight */ 15, /* InputWidth */ 15, /* KernelHeight */ 1, /* KernelWidth */ 1> functional_1_conv2d_7_1_BiasAdd_quant;
-  QLinearConv</* InputScale */ &functional_1_add_2_1_Add_0_scale, /* InputZP */ functional_1_add_2_1_Add_0_zero_point, /* WeightScale */ &functional_1_conv2d_8_1_convolution_ReadVariableOp_0_scale, /* WeightZP */ functional_1_conv2d_8_1_convolution_ReadVariableOp_0_zero_point, /* OutputScale */ &functional_1_conv2d_8_1_Add_0_scale, /* OutputZP */ functional_1_conv2d_8_1_Add_0_zero_point, /* Filters */ 1, /* InputChannels */ 32, /* InputHeight */ 15, /* InputWidth */ 15, /* KernelHeight */ 1, /* KernelWidth */ 1> functional_1_conv2d_8_1_convolution_quant;
-  BNop</* a_scale */ &functional_1_conv2d_7_1_BiasAdd_0_scale, /* a_zp */ functional_1_conv2d_7_1_BiasAdd_0_zero_point, /* b_scale */ &functional_1_batch_normalization_7_1_batchnorm_mul_0_scale, /* b_zp */ functional_1_batch_normalization_7_1_batchnorm_mul_0_zero_point, /* c_scale */ &functional_1_batch_normalization_7_1_batchnorm_mul_1_0_scale, /* c_zp */ functional_1_batch_normalization_7_1_batchnorm_mul_1_0_zero_point, /* C */ 2, /* H */ 15, /* W */ 15, /* IsMul */ true> functional_1_batch_normalization_7_1_batchnorm_mul_1_quant;
-  BNop</* a_scale */ &functional_1_conv2d_8_1_Add_0_scale, /* a_zp */ functional_1_conv2d_8_1_Add_0_zero_point, /* b_scale */ &functional_1_batch_normalization_8_1_batchnorm_mul_0_scale, /* b_zp */ functional_1_batch_normalization_8_1_batchnorm_mul_0_zero_point, /* c_scale */ &functional_1_batch_normalization_8_1_batchnorm_mul_1_0_scale, /* c_zp */ functional_1_batch_normalization_8_1_batchnorm_mul_1_0_zero_point, /* C */ 1, /* H */ 15, /* W */ 15, /* IsMul */ true> functional_1_batch_normalization_8_1_batchnorm_mul_1_quant;
-  BNop</* a_scale */ &functional_1_batch_normalization_7_1_batchnorm_mul_1_0_scale, /* a_zp */ functional_1_batch_normalization_7_1_batchnorm_mul_1_0_zero_point, /* b_scale */ &functional_1_batch_normalization_7_1_batchnorm_sub_0_scale, /* b_zp */ functional_1_batch_normalization_7_1_batchnorm_sub_0_zero_point, /* c_scale */ &functional_1_batch_normalization_7_1_batchnorm_add_1_0_scale, /* c_zp */ functional_1_batch_normalization_7_1_batchnorm_add_1_0_zero_point, /* C */ 2, /* H */ 15, /* W */ 15, /* IsMul */ false> functional_1_batch_normalization_7_1_batchnorm_add_1_quant;
-  BNop</* a_scale */ &functional_1_batch_normalization_8_1_batchnorm_mul_1_0_scale, /* a_zp */ functional_1_batch_normalization_8_1_batchnorm_mul_1_0_zero_point, /* b_scale */ &functional_1_batch_normalization_8_1_batchnorm_sub_0_scale, /* b_zp */ functional_1_batch_normalization_8_1_batchnorm_sub_0_zero_point, /* c_scale */ &functional_1_batch_normalization_8_1_batchnorm_add_1_0_scale, /* c_zp */ functional_1_batch_normalization_8_1_batchnorm_add_1_0_zero_point, /* C */ 1, /* H */ 15, /* W */ 15, /* IsMul */ false> functional_1_batch_normalization_8_1_batchnorm_add_1_quant;
-  QGemm</* a_scale */ &functional_1_batch_normalization_7_1_batchnorm_add_1_0_scale, /* a_zp */ functional_1_batch_normalization_7_1_batchnorm_add_1_0_zero_point, /* b_scale */ &functional_1_dense_3_Cast_ReadVariableOp_0_scale, /* b_zp */ functional_1_dense_3_Cast_ReadVariableOp_0_zero_point, /* c_scale */ &functional_1_dense_3_BiasAdd_0_scale, /* c_zp */ functional_1_dense_3_BiasAdd_0_zero_point, /* FlattenLen */ 450, /* Filters */ 225, /* Requant */ false> gemm_quant;
-  QGemm</* a_scale */ &functional_1_batch_normalization_8_1_batchnorm_add_1_0_scale, /* a_zp */ functional_1_batch_normalization_8_1_batchnorm_add_1_0_zero_point, /* b_scale */ &functional_1_dense_1_1_Cast_ReadVariableOp_0_scale, /* b_zp */ functional_1_dense_1_1_Cast_ReadVariableOp_0_zero_point, /* c_scale */ &functional_1_dense_1_1_BiasAdd_0_scale, /* c_zp */ functional_1_dense_1_1_BiasAdd_0_zero_point, /* FlattenLen */ 225, /* Filters */ 32, /* Requant */ true> gemm_token_0_quant;
-  QGemm</* a_scale */ &functional_1_dense_1_1_BiasAdd_0_scale, /* a_zp */ functional_1_dense_1_1_BiasAdd_0_zero_point, /* b_scale */ &functional_1_dense_2_1_Cast_ReadVariableOp_0_scale, /* b_zp */ functional_1_dense_2_1_Cast_ReadVariableOp_0_zero_point, /* c_scale */ &functional_1_dense_2_1_Add_0_scale, /* c_zp */ functional_1_dense_2_1_Add_0_zero_point, /* FlattenLen */ 32, /* Filters */ 1, /* Requant */ false> gemm_token_1_quant;
-  // clang-format on
-  Vec<SCALE_T, BOARD_SIZE * BOARD_SIZE> pi;
-  SCALE_T v;
-};
-
-} // namespace Black
-
-namespace White {
-using namespace model_w_15_params;
-inline constexpr WEIGHT_T Q_ZERO = model_w_15_params::input_zero_point;
-inline constexpr WEIGHT_T Q_ONE =
-    std::clamp(const_round_half_away_from_zero(1.0f / input_scale), WEIGHT_MIN, WEIGHT_MAX);
-
-// Parameter declarations
-
-struct QuantizedNetwork : GodNet {
-public:
-  QuantizedNetwork();
-  RetType feed(const Tensor<uint8_t, 3, BOARD_SIZE, BOARD_SIZE> &input) override;
-  RetType output() override { return std::pair<Vec<SCALE_T, BOARD_SIZE * BOARD_SIZE> &, SCALE_T &>(pi, v); }
-  std::array<WEIGHT_T, 2> qstones() const override { return {Q_ZERO, Q_ONE}; }
-
-private: // clang-format off
-  QLinearConv</* InputScale */ &input_scale, /* InputZP */ input_zero_point, /* WeightScale */ &functional_1_1_conv2d_9_1_convolution_ReadVariableOp_0_scale, /* WeightZP */ functional_1_1_conv2d_9_1_convolution_ReadVariableOp_0_zero_point, /* OutputScale */ &functional_1_1_conv2d_9_1_BiasAdd_0_scale, /* OutputZP */ functional_1_1_conv2d_9_1_BiasAdd_0_zero_point, /* Filters */ 32, /* InputChannels */ 3, /* InputHeight */ 15, /* InputWidth */ 15, /* KernelHeight */ 3, /* KernelWidth */ 3> functional_1_1_conv2d_9_1_BiasAdd_quant;
-  BNop</* a_scale */ &functional_1_1_conv2d_9_1_BiasAdd_0_scale, /* a_zp */ functional_1_1_conv2d_9_1_BiasAdd_0_zero_point, /* b_scale */ &functional_1_1_batch_normalization_9_1_batchnorm_mul_0_scale, /* b_zp */ functional_1_1_batch_normalization_9_1_batchnorm_mul_0_zero_point, /* c_scale */ &functional_1_1_batch_normalization_9_1_batchnorm_mul_1_0_scale, /* c_zp */ functional_1_1_batch_normalization_9_1_batchnorm_mul_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ true> functional_1_1_batch_normalization_9_1_batchnorm_mul_1_quant;
-  BNop</* a_scale */ &functional_1_1_batch_normalization_9_1_batchnorm_mul_1_0_scale, /* a_zp */ functional_1_1_batch_normalization_9_1_batchnorm_mul_1_0_zero_point, /* b_scale */ &functional_1_1_batch_normalization_9_1_batchnorm_sub_0_scale, /* b_zp */ functional_1_1_batch_normalization_9_1_batchnorm_sub_0_zero_point, /* c_scale */ &functional_1_1_batch_normalization_9_1_batchnorm_add_1_0_scale, /* c_zp */ functional_1_1_batch_normalization_9_1_batchnorm_add_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ false> functional_1_1_batch_normalization_9_1_batchnorm_add_1_quant;
-  QLinearConv</* InputScale */ &functional_1_1_batch_normalization_9_1_batchnorm_add_1_0_scale, /* InputZP */ functional_1_1_batch_normalization_9_1_batchnorm_add_1_0_zero_point, /* WeightScale */ &functional_1_1_conv2d_10_1_convolution_ReadVariableOp_0_scale, /* WeightZP */ functional_1_1_conv2d_10_1_convolution_ReadVariableOp_0_zero_point, /* OutputScale */ &functional_1_1_conv2d_10_1_BiasAdd_0_scale, /* OutputZP */ functional_1_1_conv2d_10_1_BiasAdd_0_zero_point, /* Filters */ 32, /* InputChannels */ 32, /* InputHeight */ 15, /* InputWidth */ 15, /* KernelHeight */ 3, /* KernelWidth */ 3> functional_1_1_conv2d_10_1_BiasAdd_quant;
-  BNop</* a_scale */ &functional_1_1_conv2d_10_1_BiasAdd_0_scale, /* a_zp */ functional_1_1_conv2d_10_1_BiasAdd_0_zero_point, /* b_scale */ &functional_1_1_batch_normalization_10_1_batchnorm_mul_0_scale, /* b_zp */ functional_1_1_batch_normalization_10_1_batchnorm_mul_0_zero_point, /* c_scale */ &functional_1_1_batch_normalization_10_1_batchnorm_mul_1_0_scale, /* c_zp */ functional_1_1_batch_normalization_10_1_batchnorm_mul_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ true> functional_1_1_batch_normalization_10_1_batchnorm_mul_1_quant;
-  BNop</* a_scale */ &functional_1_1_batch_normalization_10_1_batchnorm_mul_1_0_scale, /* a_zp */ functional_1_1_batch_normalization_10_1_batchnorm_mul_1_0_zero_point, /* b_scale */ &functional_1_1_batch_normalization_10_1_batchnorm_sub_0_scale, /* b_zp */ functional_1_1_batch_normalization_10_1_batchnorm_sub_0_zero_point, /* c_scale */ &functional_1_1_batch_normalization_10_1_batchnorm_add_1_0_scale, /* c_zp */ functional_1_1_batch_normalization_10_1_batchnorm_add_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ false> functional_1_1_batch_normalization_10_1_batchnorm_add_1_quant;
-  QLinearConv</* InputScale */ &functional_1_1_batch_normalization_10_1_batchnorm_add_1_0_scale, /* InputZP */ functional_1_1_batch_normalization_10_1_batchnorm_add_1_0_zero_point, /* WeightScale */ &functional_1_1_conv2d_11_1_convolution_ReadVariableOp_0_scale, /* WeightZP */ functional_1_1_conv2d_11_1_convolution_ReadVariableOp_0_zero_point, /* OutputScale */ &functional_1_1_conv2d_11_1_BiasAdd_0_scale, /* OutputZP */ functional_1_1_conv2d_11_1_BiasAdd_0_zero_point, /* Filters */ 32, /* InputChannels */ 32, /* InputHeight */ 15, /* InputWidth */ 15, /* KernelHeight */ 3, /* KernelWidth */ 3> functional_1_1_conv2d_11_1_BiasAdd_quant;
-  BNop</* a_scale */ &functional_1_1_conv2d_11_1_BiasAdd_0_scale, /* a_zp */ functional_1_1_conv2d_11_1_BiasAdd_0_zero_point, /* b_scale */ &functional_1_1_batch_normalization_11_1_batchnorm_mul_0_scale, /* b_zp */ functional_1_1_batch_normalization_11_1_batchnorm_mul_0_zero_point, /* c_scale */ &functional_1_1_batch_normalization_11_1_batchnorm_mul_1_0_scale, /* c_zp */ functional_1_1_batch_normalization_11_1_batchnorm_mul_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ true> functional_1_1_batch_normalization_11_1_batchnorm_mul_1_quant;
-  BNop</* a_scale */ &functional_1_1_batch_normalization_11_1_batchnorm_mul_1_0_scale, /* a_zp */ functional_1_1_batch_normalization_11_1_batchnorm_mul_1_0_zero_point, /* b_scale */ &functional_1_1_batch_normalization_11_1_batchnorm_sub_0_scale, /* b_zp */ functional_1_1_batch_normalization_11_1_batchnorm_sub_0_zero_point, /* c_scale */ &functional_1_1_batch_normalization_11_1_batchnorm_add_1_0_scale, /* c_zp */ functional_1_1_batch_normalization_11_1_batchnorm_add_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ false> functional_1_1_batch_normalization_11_1_batchnorm_add_1_quant;
-  QLinearConv</* InputScale */ &functional_1_1_add_3_1_Add_0_scale, /* InputZP */ functional_1_1_add_3_1_Add_0_zero_point, /* WeightScale */ &functional_1_1_conv2d_12_1_convolution_ReadVariableOp_0_scale, /* WeightZP */ functional_1_1_conv2d_12_1_convolution_ReadVariableOp_0_zero_point, /* OutputScale */ &functional_1_1_conv2d_12_1_BiasAdd_0_scale, /* OutputZP */ functional_1_1_conv2d_12_1_BiasAdd_0_zero_point, /* Filters */ 32, /* InputChannels */ 32, /* InputHeight */ 15, /* InputWidth */ 15, /* KernelHeight */ 3, /* KernelWidth */ 3> functional_1_1_conv2d_12_1_BiasAdd_quant;
-  BNop</* a_scale */ &functional_1_1_conv2d_12_1_BiasAdd_0_scale, /* a_zp */ functional_1_1_conv2d_12_1_BiasAdd_0_zero_point, /* b_scale */ &functional_1_1_batch_normalization_12_1_batchnorm_mul_0_scale, /* b_zp */ functional_1_1_batch_normalization_12_1_batchnorm_mul_0_zero_point, /* c_scale */ &functional_1_1_batch_normalization_12_1_batchnorm_mul_1_0_scale, /* c_zp */ functional_1_1_batch_normalization_12_1_batchnorm_mul_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ true> functional_1_1_batch_normalization_12_1_batchnorm_mul_1_quant;
-  BNop</* a_scale */ &functional_1_1_batch_normalization_12_1_batchnorm_mul_1_0_scale, /* a_zp */ functional_1_1_batch_normalization_12_1_batchnorm_mul_1_0_zero_point, /* b_scale */ &functional_1_1_batch_normalization_12_1_batchnorm_sub_0_scale, /* b_zp */ functional_1_1_batch_normalization_12_1_batchnorm_sub_0_zero_point, /* c_scale */ &functional_1_1_batch_normalization_12_1_batchnorm_add_1_0_scale, /* c_zp */ functional_1_1_batch_normalization_12_1_batchnorm_add_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ false> functional_1_1_batch_normalization_12_1_batchnorm_add_1_quant;
-  QLinearConv</* InputScale */ &functional_1_1_batch_normalization_12_1_batchnorm_add_1_0_scale, /* InputZP */ functional_1_1_batch_normalization_12_1_batchnorm_add_1_0_zero_point, /* WeightScale */ &functional_1_1_conv2d_13_1_convolution_ReadVariableOp_0_scale, /* WeightZP */ functional_1_1_conv2d_13_1_convolution_ReadVariableOp_0_zero_point, /* OutputScale */ &functional_1_1_conv2d_13_1_BiasAdd_0_scale, /* OutputZP */ functional_1_1_conv2d_13_1_BiasAdd_0_zero_point, /* Filters */ 32, /* InputChannels */ 32, /* InputHeight */ 15, /* InputWidth */ 15, /* KernelHeight */ 3, /* KernelWidth */ 3> functional_1_1_conv2d_13_1_BiasAdd_quant;
-  BNop</* a_scale */ &functional_1_1_conv2d_13_1_BiasAdd_0_scale, /* a_zp */ functional_1_1_conv2d_13_1_BiasAdd_0_zero_point, /* b_scale */ &functional_1_1_batch_normalization_13_1_batchnorm_mul_0_scale, /* b_zp */ functional_1_1_batch_normalization_13_1_batchnorm_mul_0_zero_point, /* c_scale */ &functional_1_1_batch_normalization_13_1_batchnorm_mul_1_0_scale, /* c_zp */ functional_1_1_batch_normalization_13_1_batchnorm_mul_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ true> functional_1_1_batch_normalization_13_1_batchnorm_mul_1_quant;
-  BNop</* a_scale */ &functional_1_1_batch_normalization_13_1_batchnorm_mul_1_0_scale, /* a_zp */ functional_1_1_batch_normalization_13_1_batchnorm_mul_1_0_zero_point, /* b_scale */ &functional_1_1_batch_normalization_13_1_batchnorm_sub_0_scale, /* b_zp */ functional_1_1_batch_normalization_13_1_batchnorm_sub_0_zero_point, /* c_scale */ &functional_1_1_batch_normalization_13_1_batchnorm_add_1_0_scale, /* c_zp */ functional_1_1_batch_normalization_13_1_batchnorm_add_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ false> functional_1_1_batch_normalization_13_1_batchnorm_add_1_quant;
-  QLinearConv</* InputScale */ &functional_1_1_add_4_1_Add_0_scale, /* InputZP */ functional_1_1_add_4_1_Add_0_zero_point, /* WeightScale */ &functional_1_1_conv2d_14_1_convolution_ReadVariableOp_0_scale, /* WeightZP */ functional_1_1_conv2d_14_1_convolution_ReadVariableOp_0_zero_point, /* OutputScale */ &functional_1_1_conv2d_14_1_BiasAdd_0_scale, /* OutputZP */ functional_1_1_conv2d_14_1_BiasAdd_0_zero_point, /* Filters */ 32, /* InputChannels */ 32, /* InputHeight */ 15, /* InputWidth */ 15, /* KernelHeight */ 3, /* KernelWidth */ 3> functional_1_1_conv2d_14_1_BiasAdd_quant;
-  BNop</* a_scale */ &functional_1_1_conv2d_14_1_BiasAdd_0_scale, /* a_zp */ functional_1_1_conv2d_14_1_BiasAdd_0_zero_point, /* b_scale */ &functional_1_1_batch_normalization_14_1_batchnorm_mul_0_scale, /* b_zp */ functional_1_1_batch_normalization_14_1_batchnorm_mul_0_zero_point, /* c_scale */ &functional_1_1_batch_normalization_14_1_batchnorm_mul_1_0_scale, /* c_zp */ functional_1_1_batch_normalization_14_1_batchnorm_mul_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ true> functional_1_1_batch_normalization_14_1_batchnorm_mul_1_quant;
-  BNop</* a_scale */ &functional_1_1_batch_normalization_14_1_batchnorm_mul_1_0_scale, /* a_zp */ functional_1_1_batch_normalization_14_1_batchnorm_mul_1_0_zero_point, /* b_scale */ &functional_1_1_batch_normalization_14_1_batchnorm_sub_0_scale, /* b_zp */ functional_1_1_batch_normalization_14_1_batchnorm_sub_0_zero_point, /* c_scale */ &functional_1_1_batch_normalization_14_1_batchnorm_add_1_0_scale, /* c_zp */ functional_1_1_batch_normalization_14_1_batchnorm_add_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ false> functional_1_1_batch_normalization_14_1_batchnorm_add_1_quant;
-  QLinearConv</* InputScale */ &functional_1_1_batch_normalization_14_1_batchnorm_add_1_0_scale, /* InputZP */ functional_1_1_batch_normalization_14_1_batchnorm_add_1_0_zero_point, /* WeightScale */ &functional_1_1_conv2d_15_1_convolution_ReadVariableOp_0_scale, /* WeightZP */ functional_1_1_conv2d_15_1_convolution_ReadVariableOp_0_zero_point, /* OutputScale */ &functional_1_1_conv2d_15_1_BiasAdd_0_scale, /* OutputZP */ functional_1_1_conv2d_15_1_BiasAdd_0_zero_point, /* Filters */ 32, /* InputChannels */ 32, /* InputHeight */ 15, /* InputWidth */ 15, /* KernelHeight */ 3, /* KernelWidth */ 3> functional_1_1_conv2d_15_1_BiasAdd_quant;
-  BNop</* a_scale */ &functional_1_1_conv2d_15_1_BiasAdd_0_scale, /* a_zp */ functional_1_1_conv2d_15_1_BiasAdd_0_zero_point, /* b_scale */ &functional_1_1_batch_normalization_15_1_batchnorm_mul_0_scale, /* b_zp */ functional_1_1_batch_normalization_15_1_batchnorm_mul_0_zero_point, /* c_scale */ &functional_1_1_batch_normalization_15_1_batchnorm_mul_1_0_scale, /* c_zp */ functional_1_1_batch_normalization_15_1_batchnorm_mul_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ true> functional_1_1_batch_normalization_15_1_batchnorm_mul_1_quant;
-  BNop</* a_scale */ &functional_1_1_batch_normalization_15_1_batchnorm_mul_1_0_scale, /* a_zp */ functional_1_1_batch_normalization_15_1_batchnorm_mul_1_0_zero_point, /* b_scale */ &functional_1_1_batch_normalization_15_1_batchnorm_sub_0_scale, /* b_zp */ functional_1_1_batch_normalization_15_1_batchnorm_sub_0_zero_point, /* c_scale */ &functional_1_1_batch_normalization_15_1_batchnorm_add_1_0_scale, /* c_zp */ functional_1_1_batch_normalization_15_1_batchnorm_add_1_0_zero_point, /* C */ 32, /* H */ 15, /* W */ 15, /* IsMul */ false> functional_1_1_batch_normalization_15_1_batchnorm_add_1_quant;
-  QLinearConv</* InputScale */ &functional_1_1_add_5_1_Add_0_scale, /* InputZP */ functional_1_1_add_5_1_Add_0_zero_point, /* WeightScale */ &functional_1_1_conv2d_17_1_convolution_ReadVariableOp_0_scale, /* WeightZP */ functional_1_1_conv2d_17_1_convolution_ReadVariableOp_0_zero_point, /* OutputScale */ &functional_1_1_conv2d_17_1_Add_0_scale, /* OutputZP */ functional_1_1_conv2d_17_1_Add_0_zero_point, /* Filters */ 1, /* InputChannels */ 32, /* InputHeight */ 15, /* InputWidth */ 15, /* KernelHeight */ 1, /* KernelWidth */ 1> functional_1_1_conv2d_17_1_convolution_quant;
-  QLinearConv</* InputScale */ &functional_1_1_add_5_1_Add_0_scale, /* InputZP */ functional_1_1_add_5_1_Add_0_zero_point, /* WeightScale */ &functional_1_1_conv2d_16_1_convolution_ReadVariableOp_0_scale, /* WeightZP */ functional_1_1_conv2d_16_1_convolution_ReadVariableOp_0_zero_point, /* OutputScale */ &functional_1_1_conv2d_16_1_BiasAdd_0_scale, /* OutputZP */ functional_1_1_conv2d_16_1_BiasAdd_0_zero_point, /* Filters */ 2, /* InputChannels */ 32, /* InputHeight */ 15, /* InputWidth */ 15, /* KernelHeight */ 1, /* KernelWidth */ 1> functional_1_1_conv2d_16_1_BiasAdd_quant;
-  BNop</* a_scale */ &functional_1_1_conv2d_17_1_Add_0_scale, /* a_zp */ functional_1_1_conv2d_17_1_Add_0_zero_point, /* b_scale */ &functional_1_1_batch_normalization_17_1_batchnorm_mul_0_scale, /* b_zp */ functional_1_1_batch_normalization_17_1_batchnorm_mul_0_zero_point, /* c_scale */ &functional_1_1_batch_normalization_17_1_batchnorm_mul_1_0_scale, /* c_zp */ functional_1_1_batch_normalization_17_1_batchnorm_mul_1_0_zero_point, /* C */ 1, /* H */ 15, /* W */ 15, /* IsMul */ true> functional_1_1_batch_normalization_17_1_batchnorm_mul_1_quant;
-  BNop</* a_scale */ &functional_1_1_conv2d_16_1_BiasAdd_0_scale, /* a_zp */ functional_1_1_conv2d_16_1_BiasAdd_0_zero_point, /* b_scale */ &functional_1_1_batch_normalization_16_1_batchnorm_mul_0_scale, /* b_zp */ functional_1_1_batch_normalization_16_1_batchnorm_mul_0_zero_point, /* c_scale */ &functional_1_1_batch_normalization_16_1_batchnorm_mul_1_0_scale, /* c_zp */ functional_1_1_batch_normalization_16_1_batchnorm_mul_1_0_zero_point, /* C */ 2, /* H */ 15, /* W */ 15, /* IsMul */ true> functional_1_1_batch_normalization_16_1_batchnorm_mul_1_quant;
-  BNop</* a_scale */ &functional_1_1_batch_normalization_17_1_batchnorm_mul_1_0_scale, /* a_zp */ functional_1_1_batch_normalization_17_1_batchnorm_mul_1_0_zero_point, /* b_scale */ &functional_1_1_batch_normalization_17_1_batchnorm_sub_0_scale, /* b_zp */ functional_1_1_batch_normalization_17_1_batchnorm_sub_0_zero_point, /* c_scale */ &functional_1_1_batch_normalization_17_1_batchnorm_add_1_0_scale, /* c_zp */ functional_1_1_batch_normalization_17_1_batchnorm_add_1_0_zero_point, /* C */ 1, /* H */ 15, /* W */ 15, /* IsMul */ false> functional_1_1_batch_normalization_17_1_batchnorm_add_1_quant;
-  BNop</* a_scale */ &functional_1_1_batch_normalization_16_1_batchnorm_mul_1_0_scale, /* a_zp */ functional_1_1_batch_normalization_16_1_batchnorm_mul_1_0_zero_point, /* b_scale */ &functional_1_1_batch_normalization_16_1_batchnorm_sub_0_scale, /* b_zp */ functional_1_1_batch_normalization_16_1_batchnorm_sub_0_zero_point, /* c_scale */ &functional_1_1_batch_normalization_16_1_batchnorm_add_1_0_scale, /* c_zp */ functional_1_1_batch_normalization_16_1_batchnorm_add_1_0_zero_point, /* C */ 2, /* H */ 15, /* W */ 15, /* IsMul */ false> functional_1_1_batch_normalization_16_1_batchnorm_add_1_quant;
-  QGemm</* a_scale */ &functional_1_1_batch_normalization_17_1_batchnorm_add_1_0_scale, /* a_zp */ functional_1_1_batch_normalization_17_1_batchnorm_add_1_0_zero_point, /* b_scale */ &functional_1_1_dense_4_1_Cast_ReadVariableOp_0_scale, /* b_zp */ functional_1_1_dense_4_1_Cast_ReadVariableOp_0_zero_point, /* c_scale */ &functional_1_1_dense_4_1_BiasAdd_0_scale, /* c_zp */ functional_1_1_dense_4_1_BiasAdd_0_zero_point, /* FlattenLen */ 225, /* Filters */ 32, /* Requant */ true> gemm_quant;
-  QGemm</* a_scale */ &functional_1_1_batch_normalization_16_1_batchnorm_add_1_0_scale, /* a_zp */ functional_1_1_batch_normalization_16_1_batchnorm_add_1_0_zero_point, /* b_scale */ &functional_1_1_dense_3_1_Cast_ReadVariableOp_0_scale, /* b_zp */ functional_1_1_dense_3_1_Cast_ReadVariableOp_0_zero_point, /* c_scale */ &functional_1_1_dense_3_1_BiasAdd_0_scale, /* c_zp */ functional_1_1_dense_3_1_BiasAdd_0_zero_point, /* FlattenLen */ 450, /* Filters */ 225, /* Requant */ false> gemm_token_1_quant;
-  QGemm</* a_scale */ &functional_1_1_dense_4_1_BiasAdd_0_scale, /* a_zp */ functional_1_1_dense_4_1_BiasAdd_0_zero_point, /* b_scale */ &functional_1_1_dense_5_1_Cast_ReadVariableOp_0_scale, /* b_zp */ functional_1_1_dense_5_1_Cast_ReadVariableOp_0_zero_point, /* c_scale */ &functional_1_1_dense_5_1_Add_0_scale, /* c_zp */ functional_1_1_dense_5_1_Add_0_zero_point, /* FlattenLen */ 32, /* Filters */ 1, /* Requant */ false> gemm_token_0_quant;
-  // clang-format on
-
-  Vec<SCALE_T, BOARD_SIZE * BOARD_SIZE> pi;
-  SCALE_T v;
-};
-
-} // namespace White
-
 struct Network {
-  using InputTensor = GodNet::InputTensor;
-  using RetType = GodNet::RetType;
-  static constexpr size_t BOARD_SIZE = GodNet::BOARD_SIZE;
-  Black::QuantizedNetwork b_net;
-  White::QuantizedNetwork w_net;
-  Network() : b_net(), w_net() {}
-  RetType feed(const Matrix<STONE_COLOR, BOARD_SIZE, BOARD_SIZE> &board,
-               std::optional<std::pair<WEIGHT_T, WEIGHT_T>> last_move, STONE_COLOR net_color) {
-    InputTensor input = board2tensor(board, last_move, net_color);
-    GodNet &current_net =
-        (net_color == STONE_COLOR::BLACK) ? static_cast<GodNet &>(b_net) : static_cast<GodNet &>(w_net);
-    return current_net.feed(input);
-  }
+  using WEIGHT_T = float;
+  static constexpr size_t BOARD_SIZE = 15;
+  static constexpr size_t TENSOR_SIZE = 19;
+  static constexpr size_t IN_BIN_CHANNELS = 22;
+  static constexpr size_t IN_GLOBAL_CHANNELS = 39;
+  static constexpr size_t MASK_SIZE = TENSOR_SIZE * TENSOR_SIZE + 1;
+  /*
+--- TensorRT Inference Results ---
+Policy Logits:
+  - Shape: (1, 1, 362)
+  - DType: float32
+  - Size (total elements): 362
+
+Value Logits:
+  - Shape: (1, 3)
+  - DType: float32
+  - Size (total elements): 3
+  */
+
+  //
+  using BinaryInputUnit_T = Tensor<WEIGHT_T, IN_BIN_CHANNELS, TENSOR_SIZE, TENSOR_SIZE>;
+  using GlobalInputUnit_T = Vec<WEIGHT_T, IN_GLOBAL_CHANNELS>;
+  using MaskInputUnit_T = Vec<WEIGHT_T, MASK_SIZE>;
+  using InputUnit_T = std::tuple<BinaryInputUnit_T, GlobalInputUnit_T, MaskInputUnit_T>;
+  using PolicyOut_T = Vec<float, TENSOR_SIZE * TENSOR_SIZE + 1>;
+  using ValueOut_T = Vec<float, 3>;
+  using RetType = std::pair<PolicyOut_T, ValueOut_T>;
+
+  static void feed(void *d_binary_input, void *d_global_input, void *d_mask_input, void *d_policy_output,
+                   void *d_value_output, int batch_size, cudaStream_t stream);
+  static RetType evaluate(const Matrix<Utils::STONE_COLOR, BOARD_SIZE, BOARD_SIZE> &board, Utils::STONE_COLOR player);
 
 private:
-  InputTensor board2tensor(const Matrix<STONE_COLOR, BOARD_SIZE, BOARD_SIZE> &board,
-                           std::optional<std::pair<WEIGHT_T, WEIGHT_T>> last_move, STONE_COLOR net_color) {
-    InputTensor input;
-    GodNet &current_net =
-        (net_color == STONE_COLOR::BLACK) ? static_cast<GodNet &>(b_net) : static_cast<GodNet &>(w_net);
-    auto [zero, one] = current_net.qstones();
-    for (size_t i = 0; i < BOARD_SIZE; ++i) {
-      for (size_t j = 0; j < BOARD_SIZE; ++j) {
-        auto stone = board[i][j];
-        if (stone == EMPTY) {
-          input[0][i][j] = zero;
-          input[1][i][j] = zero;
-        } else if (stone == net_color) {
-          input[0][i][j] = one;
-          input[1][i][j] = zero;
-        } else {
-          input[0][i][j] = zero;
-          input[1][i][j] = one;
-        }
-        input[2][i][j] = zero;
-      }
-    }
-    if (last_move) {
-      auto [r, c] = *last_move;
-      input[2][r][c] = one;
-    }
-    return input;
-  }
+  static std::unique_ptr<InputUnit_T> prepareInput(const Matrix<Utils::STONE_COLOR, BOARD_SIZE, BOARD_SIZE> &board,
+                                                   Utils::STONE_COLOR player);
 };
-} // namespace AlphaGomoku
