@@ -87,7 +87,7 @@ struct AtomicNodeStats {
 class VirtualLossManager {
 private:
     std::atomic<int> virtual_loss_count{0};
-    static constexpr double VIRTUAL_LOSS_VALUE = -1.0;  // 虚拟损失值
+    static constexpr double VIRTUAL_LOSS_VALUE = Config::MultiThread::VIRTUAL_LOSS_VALUE;  // 虚拟损失值
     
 public:
     // 添加虚拟损失
@@ -117,54 +117,6 @@ public:
     }
 };
 
-//========================================================================================
-// 3. 网络推理批处理请求
-//========================================================================================
-
-// 推理请求结构
-struct InferenceRequest {
-    Board board_state;
-    std::optional<std::pair<int, int>> last_move;
-    AlphaGomoku::STONE_COLOR current_color;
-    std::promise<std::pair<Vec<float, Config::BOARD_SQUARES>, float>> promise;
-    
-    InferenceRequest(const Board& board, 
-                    const std::optional<std::pair<int, int>>& move,
-                    AlphaGomoku::STONE_COLOR color)
-        : board_state(board), last_move(move), current_color(color) {}
-};
-
-// 网络推理批处理管理器
-class BatchInferenceManager {
-private:
-    AlphaGomoku::Network& network;
-    std::queue<std::unique_ptr<InferenceRequest>> request_queue;
-    std::mutex queue_mutex;
-    std::condition_variable queue_cv;
-    std::condition_variable batch_cv;
-    
-    std::atomic<bool> shutdown_flag{false};
-    std::thread inference_thread;
-    
-    static constexpr size_t MAX_BATCH_SIZE = 8;  // 最大批处理大小
-    static constexpr std::chrono::milliseconds BATCH_TIMEOUT{5};  // 批处理超时
-    
-    void inferenceWorker();
-    void processBatch(std::vector<std::unique_ptr<InferenceRequest>>& batch);
-    
-public:
-    explicit BatchInferenceManager(AlphaGomoku::Network& net);
-    ~BatchInferenceManager();
-    
-    // 提交推理请求，返回future
-    std::future<std::pair<Vec<float, Config::BOARD_SQUARES>, float>> 
-    submitRequest(const Board& board, 
-                  const std::optional<std::pair<int, int>>& last_move,
-                  AlphaGomoku::STONE_COLOR current_color);
-    
-    // 关闭批处理管理器
-    void shutdown();
-};
 
 //========================================================================================
 // 4. 线程池管理
@@ -205,7 +157,7 @@ private:
     size_t pool_size;
     
 public:
-    explicit MutexPool(size_t size = 4096);  // 默认4096个锁
+    explicit MutexPool(size_t size = Config::MultiThread::DEFAULT_MUTEX_POOL_SIZE);  // 默认使用配置中的大小
     ~MutexPool() = default;
     
     // 根据节点指针获取对应的锁
@@ -222,21 +174,19 @@ public:
 //========================================================================================
 
 struct MultiThreadConfig {
-    size_t num_search_threads = 4;           // 搜索线程数
-    size_t max_batch_size = 8;               // 最大批处理大小
-    std::chrono::milliseconds batch_timeout{5};  // 批处理超时
-    bool enable_virtual_loss = true;         // 启用虚拟损失
-    bool enable_batch_inference = true;      // 启用批处理推理
-    size_t mutex_pool_size = 4096;          // 互斥锁池大小
+    size_t num_search_threads = Config::MultiThread::DEFAULT_SEARCH_THREADS;  // 搜索线程数
+    bool enable_virtual_loss = Config::MultiThread::ENABLE_VIRTUAL_LOSS;      // 启用虚拟损失
+    size_t mutex_pool_size = Config::MultiThread::DEFAULT_MUTEX_POOL_SIZE;    // 互斥锁池大小
     
     // 虚拟损失相关参数
-    double virtual_loss_value = -1.0;        // 虚拟损失值
+    double virtual_loss_value = Config::MultiThread::VIRTUAL_LOSS_VALUE;      // 虚拟损失值
     
     // 从配置文件加载配置的静态方法
     static MultiThreadConfig getDefault() {
         MultiThreadConfig config;
         // 根据硬件线程数调整默认线程数
-        config.num_search_threads = std::min(4u, std::thread::hardware_concurrency());
+        config.num_search_threads = std::min(Config::MultiThread::MAX_SEARCH_THREADS, 
+                                           static_cast<size_t>(std::thread::hardware_concurrency()));
         return config;
     }
 };

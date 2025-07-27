@@ -153,9 +153,14 @@ struct ThreadSafeNode {
         }
     }
     
-    // 线程安全的子节点选择
+    //========================================================================================
+        // 线程安全的子节点选择 - MCTS选择阶段的核心函数
+        // 功能：从当前节点的所有合法子节点中选择最佳节点进行扩展
+        // 算法：使用UCB算法平衡探索和利用，支持已扩展和未扩展节点的选择
+        // 线程安全：通过原子操作和状态机确保多线程环境下的安全性
+        //========================================================================================
     std::pair<int, std::shared_ptr<ThreadSafeNode>> select_child(MultiThreadHelpers::MutexPool& mutex_pool) const {
-        auto legal_moves_vec = Utils::legal_moves(board_state);
+                auto legal_moves_vec = Utils::legal_moves(board_state);
         std::shared_ptr<ThreadSafeNode> best_child = nullptr;
         int best_action_idx = -1;
         float max_score = -std::numeric_limits<float>::infinity();
@@ -191,7 +196,13 @@ struct ThreadSafeNode {
         return {best_action_idx, best_child};
     }
     
-    // 线程安全的子节点创建
+
+    //========================================================================================
+    // 线程安全的子节点创建 - MCTS扩展阶段的核心函数
+    // 功能：为指定的动作创建新的子节点，采用KataGo风格的原子操作
+    // 线程安全：使用CAS操作确保只有一个线程能成功创建子节点
+    // 节点复用：通过NodeTable实现节点复用，避免重复创建相同状态的节点
+    //========================================================================================
     template<typename NetworkType>
     std::shared_ptr<ThreadSafeNode> create_child(int action_idx, NetworkType& net, NodeTable& node_table, MultiThreadHelpers::MutexPool& mutex_pool) {
         if (action_idx < 0 || action_idx >= static_cast<int>(children.size())) {
@@ -227,7 +238,13 @@ struct ThreadSafeNode {
         }
     }
     
-    // 包装方法：创建子节点并立即评估（通过回调函数）
+
+    //========================================================================================
+    // 包装方法：创建子节点并立即评估 - MCTS扩展和评估阶段的组合函数
+    // 功能：创建子节点后立即进行神经网络评估，实现扩展和评估的原子操作
+    // 设计模式：使用回调函数模式，将评估逻辑与节点创建逻辑解耦
+    // 状态管理：通过状态机确保只有未评估的节点才会被评估
+    //========================================================================================
     template<typename NetworkType>
     std::shared_ptr<ThreadSafeNode> create_child_and_evaluate(
         int action_idx, 
@@ -258,7 +275,13 @@ struct ThreadSafeNode {
     // 线程安全的回传
     void backpropagate();
     
-    // 计算子节点分数（包含虚拟损失）
+    // 计算子节点分数
+    //========================================================================================
+    // 计算子节点UCB分数 - MCTS选择算法的核心计算函数（包含虚拟损失）
+    // 功能：计算子节点的UCB分数，包含利用项(Q值)和探索项(U值)
+    // 公式：UCB = Q + U，其中Q是利用项，U是探索项
+    // 虚拟损失：包含虚拟损失调整，用于多线程环境下的负载均衡
+    //========================================================================================
     float child_score(const ThreadSafeNode& child) const {
         int child_visits = child.get_visit_count_with_virtual_loss();
         // 修正: 分母加max(1, x)保护
@@ -460,7 +483,12 @@ void ThreadSafeMCTS_Agent_Tmpl<NetworkType>::run_mcts_single() {
     //     (*it)->virtual_loss.removeVirtualLoss();
     // }
 }
-
+    //========================================================================================
+    // 并行MCTS搜索 - 多线程并行执行MCTS搜索
+    // 功能：使用线程池并行执行多次MCTS搜索，支持最大模拟次数和时间限制
+    // 参数：max_simulations - 最大模拟次数，max_seconds - 最大搜索时间
+    // 返回值：实际执行的模拟次数
+    //========================================================================================
 template<typename NetworkType>
 int ThreadSafeMCTS_Agent_Tmpl<NetworkType>::run_mcts_parallel_with_stop(int max_simulations, double max_seconds) {
     total_simulations_ = 0;
@@ -501,6 +529,12 @@ int ThreadSafeMCTS_Agent_Tmpl<NetworkType>::run_mcts_parallel_with_stop(int max_
     return total;
 }
 
+    //========================================================================================
+    // 统一的神经网络评估方法 - MCTS搜索流程的核心评估函数
+    // 功能：使用神经网络评估节点，获取策略和价值
+    // 状态管理：通过状态机确保评估的线程安全性
+    // 错误处理：评估失败时保持节点状态，允许重试
+    //========================================================================================
 template<typename NetworkType>
 bool ThreadSafeMCTS_Agent_Tmpl<NetworkType>::evaluateNodeWithNeuralNetwork(std::shared_ptr<ThreadSafeNode> node) {
     // 1. 状态机检查：尝试获取评估权限
@@ -530,6 +564,11 @@ bool ThreadSafeMCTS_Agent_Tmpl<NetworkType>::evaluateNodeWithNeuralNetwork(std::
     }
 }
 
+    //========================================================================================
+    // 应用移动 - 更新根节点和节点表
+    // 功能：根据移动索引更新根节点，并更新节点表
+    // 线程安全：使用原子操作确保多线程环境下的安全性
+    //========================================================================================
 template<typename NetworkType>
 void ThreadSafeMCTS_Agent_Tmpl<NetworkType>::apply_move(int move_idx, NodeTable& node_table) {
     // 不再需要锁，因为create_child现在使用原子操作
@@ -550,6 +589,11 @@ void ThreadSafeMCTS_Agent_Tmpl<NetworkType>::apply_move(int move_idx, NodeTable&
     root->parent = nullptr;
 }
 
+    //========================================================================================
+    // 获取最佳移动索引 - 选择最受欢迎的移动
+    // 功能：从根节点的所有子节点中选择访问次数最多的移动
+    // 线程安全：使用原子操作确保多线程环境下的安全性
+    //========================================================================================
 template<typename NetworkType>
 int ThreadSafeMCTS_Agent_Tmpl<NetworkType>::next_move_idx() const {
     int max_visits = -1;
@@ -569,20 +613,22 @@ int ThreadSafeMCTS_Agent_Tmpl<NetworkType>::next_move_idx() const {
 }
 // ================== 模板实现迁移 END ==================
 
-} // namespace MultiThreadMCTS
-
-namespace MultiThreadMCTS {
-
-    //========================================================================================
-    // ThreadSafeNode 实现
-    //========================================================================================
+//========================================================================================
+// ThreadSafeNode 实现
+//========================================================================================
     
     namespace {
     std::atomic<size_t> global_node_id{1};
     }
-    
+
+    //========================================================================================
+    // 线程安全的回传 - MCTS回传阶段的核心函数
+    // 功能：将叶子节点的价值回传到根节点，更新路径上所有节点的统计信息
+    // 线程安全：使用原子操作更新访问次数和价值总和
+    // 虚拟损失：在回传过程中移除虚拟损失，恢复节点的真实统计信息
+    //======================================================================================== 
     void ThreadSafeNode::backpropagate() {
-        ThreadSafeNode* current = this;
+      ThreadSafeNode* current = this;
         float backup_value = value;
         
         while (current != nullptr) {
@@ -673,12 +719,18 @@ namespace MultiThreadMCTS {
         return {false, 0.0f};
     }
     
+//========================================================================================
+// NodeTable 实现
+//========================================================================================
+
     //========================================================================================
-    // NodeTable 实现
+    // 获取或创建节点 - 节点复用的核心方法
+    // 功能：根据棋盘状态获取已存在的节点，或创建新节点
+    // 线程安全：使用分片锁确保多线程环境下的安全性
+    // 节点复用：避免重复创建相同状态的节点，节省内存
     //========================================================================================
-    
     inline NodeTable::NodePtr NodeTable::get_or_create(const Board& board, AlphaGomoku::STONE_COLOR player, int move_number, std::function<NodePtr()> node_factory) {
-        // 使用基础hash，冲突概率极低
+       // 使用基础hash，冲突概率极低
         Hash128 hash = Zobrist::hash(board, player, move_number);
         
         size_t shard_idx = get_shard_idx(hash);
@@ -695,6 +747,11 @@ namespace MultiThreadMCTS {
         }
     }
     
+    //========================================================================================
+    // 垃圾回收 - 清理不再使用的节点
+    // 功能：定期清理不再使用的节点，释放内存
+    // 线程安全：使用分片锁确保多线程环境下的安全性
+    //========================================================================================
     inline void NodeTable::garbage_collect() {
         for (size_t shard_idx = 0; shard_idx < num_shards_; ++shard_idx) {
             std::lock_guard<std::mutex> lock(shard_mutexes_[shard_idx]);
@@ -708,7 +765,12 @@ namespace MultiThreadMCTS {
             }
         }
     }
-    
+
+    //========================================================================================
+    // 打印统计信息 - 用于调试和性能分析
+    // 功能：打印节点表的统计信息，包括节点数量和分片分布
+    // 线程安全：使用分片锁确保多线程环境下的安全性
+    //========================================================================================
     inline void NodeTable::print_stats() const {
         size_t total = 0;
         for (size_t shard_idx = 0; shard_idx < num_shards_; ++shard_idx) {

@@ -1,4 +1,5 @@
 #pragma once
+#include <cstddef>
 namespace Config {
 inline constexpr int BOARD_SIZE = 15;
 inline constexpr int BOARD_SQUARES = BOARD_SIZE * BOARD_SIZE;
@@ -14,6 +15,15 @@ inline constexpr int MAX_BATCH_SIZE = 32;
 inline const char *ENGINE_PATH = "engine/engine_fp32.trt";
 
 inline constexpr int NUM_BATCH_BUFFERS = 3;
+// 多线程相关配置
+namespace MultiThread {
+  inline constexpr size_t DEFAULT_SEARCH_THREADS = 4;    // 默认搜索线程数
+  inline constexpr bool ENABLE_VIRTUAL_LOSS = true;      // 启用虚拟损失
+  inline constexpr size_t DEFAULT_MUTEX_POOL_SIZE = 4096; // 默认互斥锁池大小
+  inline constexpr double VIRTUAL_LOSS_VALUE = -1.0;     // 虚拟损失值
+  inline constexpr size_t MAX_SEARCH_THREADS = 64;       // 最大搜索线程数
+}
+
 // FPU 相关配置
 namespace FPU {
   inline constexpr float REDUCTION_MAX = 0.2f;           // 最大 FPU 削减量
