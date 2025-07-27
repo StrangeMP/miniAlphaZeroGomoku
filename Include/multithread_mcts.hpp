@@ -168,6 +168,10 @@ struct ThreadSafeNode {
             int vloss = child ? child->virtual_loss.getVirtualLossCount() : 0;
             float score;
             if (child) {
+                // 检查节点状态，跳过正在评估的节点
+                if (child->isEvaluating()) {
+                    continue; // 跳过正在评估的节点
+                }
                 // 修正：虚拟损失已经在 child_score 中考虑了，这里不需要额外减去
                 score = child_score(*child);
             } else {
