@@ -5,11 +5,15 @@
 #include <atomic>
 #include <condition_variable>
 #include <cuda_runtime.h>
-#include <future>
 #include <memory>
 #include <mutex>
 #include <thread>
 #include <vector>
+
+// Forward declaration
+namespace MultiThreadMCTS {
+    struct ThreadSafeNode;
+}
 
 class InferenceDispatcher {
 public:
@@ -21,9 +25,10 @@ public:
   void start();
   void stop();
 
-  std::future<OutputResult> collect(const Network::BinaryInputUnit_T &binary_input,
-                                    const Network::GlobalInputUnit_T &global_input,
-                                    const Network::MaskInputUnit_T &mask_input);
+  void collect(const Network::BinaryInputUnit_T &binary_input,
+               const Network::GlobalInputUnit_T &global_input,
+               const Network::MaskInputUnit_T &mask_input,
+               MultiThreadMCTS::ThreadSafeNode* node);
 
 private:
   // A struct to hold all resources for a single batch inference.
@@ -34,7 +39,7 @@ private:
     Network::MaskInputUnit_T *mask_inputs = nullptr;
     Network::PolicyOut_T *policy_outputs = nullptr;
     Network::ValueOut_T *value_outputs = nullptr;
-    std::vector<std::promise<OutputResult>> promises;
+    std::vector<MultiThreadMCTS::ThreadSafeNode*> node_pointers;
 
     // GPU-side resources
     cudaStream_t stream = nullptr;

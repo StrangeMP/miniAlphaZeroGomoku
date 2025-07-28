@@ -103,17 +103,21 @@ void Network::feed(void *d_binary_input, void *d_global_input, void *d_mask_inpu
   g_trt_state.context->enqueueV3(stream);
 }
 
-Network::RetType Network::evaluate(const Matrix<Utils::STONE_COLOR, BOARD_SIZE, BOARD_SIZE> &board,
-                                   Utils::STONE_COLOR player) {
+void Network::evaluate(MultiThreadMCTS::ThreadSafeNode *node) {
+  if (!node) {
+    throw std::invalid_argument("Node pointer cannot be null");
+  }
   static auto &dispatcher = InferenceDispatcher::getInstance();
-  auto input_unit = prepareInput(board, player);
-  auto future = dispatcher.collect(std::get<0>(*input_unit), std::get<1>(*input_unit), std::get<2>(*input_unit));
-  input_unit.reset(); // Release input memory
-  return future.get();
+
+  // Prepare input from node's board state
+  auto [binary_input, global_input, mask_input] = prepareInput(node->board_state, node->current_color);
+
+  // Submit to dispatcher
+  dispatcher.collect(binary_input, global_input, mask_input, node);
 }
 
-std::unique_ptr<Network::InputUnit_T>
-Network::prepareInput(const Matrix<Utils::STONE_COLOR, BOARD_SIZE, BOARD_SIZE> &board, Utils::STONE_COLOR player) {
+Network::InputUnit_T Network::prepareInput(const Matrix<Utils::STONE_COLOR, BOARD_SIZE, BOARD_SIZE> &board,
+                                           Utils::STONE_COLOR player) {
   static constexpr auto mask_vec_index = [](size_t r, size_t c) { return r * TENSOR_SIZE + c; };
   static constexpr auto get_input_template = []() {
     // bf
@@ -131,6 +135,7 @@ Network::prepareInput(const Matrix<Utils::STONE_COLOR, BOARD_SIZE, BOARD_SIZE> &
     for (size_t r = 0; r < Config::BOARD_SIZE; ++r) {
       for (size_t c = 0; c < Config::BOARD_SIZE; ++c) {
         binary[0][r][c] = 1.0f;
+        mask[mask_vec_index(r, c)] = 1.0f;
       }
     }
 
@@ -166,8 +171,8 @@ Network::prepareInput(const Matrix<Utils::STONE_COLOR, BOARD_SIZE, BOARD_SIZE> &
     }
     return input;
   };
-  auto p_input = std::make_unique<Network::InputUnit_T>(get_input_template());
-  auto &[binary, global, mask] = *p_input;
+  auto p_input = get_input_template();
+  auto &[binary, global, mask] = p_input;
   CForbiddenPointFinder fpf(board);
   for (size_t r = 0; r < BOARD_SIZE; ++r) {
     for (size_t c = 0; c < BOARD_SIZE; ++c) {

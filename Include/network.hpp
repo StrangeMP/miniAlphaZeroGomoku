@@ -1,5 +1,6 @@
 #pragma once
 #include "compute.hpp"
+#include "multithread_mcts.hpp"
 #include "utils.hpp"
 #include <cstddef>
 #include <cuda_runtime.h>
@@ -38,9 +39,9 @@ Value Logits:
 
   static void feed(void *d_binary_input, void *d_global_input, void *d_mask_input, void *d_policy_output,
                    void *d_value_output, int batch_size, cudaStream_t stream);
-  static RetType evaluate(const Matrix<Utils::STONE_COLOR, BOARD_SIZE, BOARD_SIZE> &board, Utils::STONE_COLOR player);
+  static void evaluate(MultiThreadMCTS::ThreadSafeNode* node);
 
 private:
-  static std::unique_ptr<InputUnit_T> prepareInput(const Matrix<Utils::STONE_COLOR, BOARD_SIZE, BOARD_SIZE> &board,
+  static InputUnit_T prepareInput(const Matrix<Utils::STONE_COLOR, BOARD_SIZE, BOARD_SIZE> &board,
                                                    Utils::STONE_COLOR player);
 };

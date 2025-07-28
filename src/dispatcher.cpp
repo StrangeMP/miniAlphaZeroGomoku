@@ -1,5 +1,6 @@
 #include "dispatcher.hpp"
 #include "config.hpp"
+#include "multithread_mcts.hpp"
 #include <chrono>
 #include <stdexcept>
 
@@ -19,7 +20,7 @@ InferenceDispatcher::InferenceDispatcher() {
     cudaMallocHost(&batch->mask_inputs, Config::MAX_BATCH_SIZE * sizeof(Network::MaskInputUnit_T));
     cudaMallocHost(&batch->policy_outputs, Config::MAX_BATCH_SIZE * sizeof(Network::PolicyOut_T));
     cudaMallocHost(&batch->value_outputs, Config::MAX_BATCH_SIZE * sizeof(Network::ValueOut_T));
-    batch->promises.resize(Config::MAX_BATCH_SIZE);
+    batch->node_pointers.resize(Config::MAX_BATCH_SIZE);
 
     // Allocate GPU memory and create CUDA resources once
     cudaStreamCreate(&batch->stream);
@@ -89,18 +90,19 @@ void InferenceDispatcher::stop() {
     reaper_thread_->join();
 }
 
-std::future<InferenceDispatcher::OutputResult>
-InferenceDispatcher::collect(const Network::BinaryInputUnit_T &binary_input,
-                             const Network::GlobalInputUnit_T &global_input,
-                             const Network::MaskInputUnit_T &mask_input) {
+void InferenceDispatcher::collect(const Network::BinaryInputUnit_T &binary_input,
+                                  const Network::GlobalInputUnit_T &global_input,
+                                  const Network::MaskInputUnit_T &mask_input, MultiThreadMCTS::ThreadSafeNode *node) {
   if (!running_.load() || shutting_down_.load()) {
     throw std::runtime_error("Dispatcher is not running or shutting down.");
   }
 
+  if (!node) {
+    throw std::invalid_argument("Node pointer cannot be null");
+  }
+
   Batch *current_batch;
   int slot;
-  std::promise<OutputResult> promise;
-  auto future = promise.get_future();
 
   {
     // Lock to protect the check-then-act sequence for getting a slot
@@ -123,8 +125,7 @@ InferenceDispatcher::collect(const Network::BinaryInputUnit_T &binary_input,
     current_batch->binary_inputs[slot] = binary_input;
     current_batch->global_inputs[slot] = global_input;
     current_batch->mask_inputs[slot] = mask_input;
-    current_batch->promises[slot] = std::move(promise);
-
+    current_batch->node_pointers[slot] = node;
 
     // If this request filled the batch, swap it out for a new one
     if (slot + 1 >= Config::MAX_BATCH_SIZE) {
@@ -132,7 +133,7 @@ InferenceDispatcher::collect(const Network::BinaryInputUnit_T &binary_input,
       Batch *next_batch = nullptr;
       if (available_batches_.try_dequeue(next_batch)) {
         active_batch_.store(next_batch);
-        collector_cv_.notify_all(); 
+        collector_cv_.notify_all();
       } else {
         active_batch_.store(nullptr);
       }
@@ -140,9 +141,7 @@ InferenceDispatcher::collect(const Network::BinaryInputUnit_T &binary_input,
       // Push the full batch to the processing queue
       pending_processing_.enqueue(current_batch);
     }
-  } 
-
-  return future;
+  }
 }
 
 void InferenceDispatcher::submitterLoop() {
@@ -227,18 +226,26 @@ void InferenceDispatcher::reaperLoop() {
         // Block until this specific batch's event is complete
         cudaEventSynchronize(completed_batch->event);
 
-        // This batch is done. Fulfill promises.
+        // This batch is done. Set inference results on nodes.
         for (int i = 0; i < completed_batch->item_count; ++i) {
-          OutputResult result = std::make_pair(completed_batch->policy_outputs[i], completed_batch->value_outputs[i]);
-          completed_batch->promises[i].set_value(std::move(result));
+          MultiThreadMCTS::ThreadSafeNode *node = completed_batch->node_pointers[i];
+          if (node) {
+            const auto &policy = completed_batch->policy_outputs[i];
+            const auto &value_vec = completed_batch->value_outputs[i];
+
+            // Set the inference result on the node
+            node->setInferenceResult(policy, value_vec);
+          }
         }
       } catch (const std::exception &e) {
-        // Propagate the exception to all waiting futures in this batch
+        // On exception, we should still try to set some default result for nodes
+        // or mark them as failed evaluation, but for now just log the error
         for (int i = 0; i < completed_batch->item_count; ++i) {
-          try {
-            completed_batch->promises[i].set_exception(std::current_exception());
-          } catch (...) {
-            // Ignore exceptions from set_exception (e.g., if promise is abandoned)
+          MultiThreadMCTS::ThreadSafeNode *node = completed_batch->node_pointers[i];
+          if (node) {
+            // Set default/error result - zero policy and neutral value
+            Vec<float, Config::BOARD_SQUARES> policy{};
+            node->setInferenceResult(policy, 0.0f);
           }
         }
       }

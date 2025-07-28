@@ -1,7 +1,8 @@
 #pragma once
 
-#include "mcts.hpp"
 #include "multithreadhelpers.hpp"
+#include "network.hpp"
+#include "utils.hpp"
 #include "zobrist.hpp"
 #include "hash128.hpp"
 #include <atomic>
@@ -9,8 +10,6 @@
 #include <memory>
 #include <unordered_map>
 #include <functional>
-#include <iostream>
-
 
 using namespace MultiThreadHelpers;
 
@@ -32,7 +31,7 @@ public:
           shards_(num_shards),
           shard_mutexes_(num_shards) {}
     // 查找或插入节点，线程安全
-    NodePtr get_or_create(const Board& board, AlphaGomoku::STONE_COLOR player, int move_number, std::function<NodePtr()> node_factory);
+    NodePtr get_or_create(const Board& board, Utils::STONE_COLOR player, int move_number, std::function<NodePtr()> node_factory);
     // 可选：定期清理无用节点
     void garbage_collect();
     void print_stats() const;
@@ -81,8 +80,8 @@ struct ThreadSafeNode {
     
     size_t debug_id = 0; // 用于调试唯一标识
     ThreadSafeNode *parent;
-    AlphaGomoku::STONE_COLOR current_color;
-    AlphaGomoku::STONE_COLOR opponent_color;
+    Utils::STONE_COLOR current_color;
+    Utils::STONE_COLOR opponent_color;
     float prior_p;
     
     // 原子化的统计信息
@@ -98,18 +97,17 @@ struct ThreadSafeNode {
     // 使用原子shared_ptr数组管理子节点，采用KataGo风格的原子操作
     std::array<std::atomic<std::shared_ptr<ThreadSafeNode>>, Config::BOARD_SQUARES> children;
     
-    int prior_action_idx;
-    Vec<float, Config::BOARD_SQUARES> pi;
-    float value = 0.0f;
+    Vec<float, Config::BOARD_SQUARES + 1> pi;
+    Network::ValueOut_T value;
     int move_number = 0; // 新增：当前节点的步数
     
     // 构造函数
     template<typename NetworkType>
-    ThreadSafeNode(ThreadSafeNode *parent_, float prior, AlphaGomoku::STONE_COLOR turn, 
+    ThreadSafeNode(ThreadSafeNode *parent_, float prior, Utils::STONE_COLOR turn, 
                    const Board &current_board, int action_idx, NetworkType &net, int move_number_ = 0)
         : parent(parent_), current_color(turn),
-          opponent_color(turn == Config::BLACK_STONE ? Config::WHITE_STONE : Config::BLACK_STONE), 
-          prior_p(prior), board_state(current_board), prior_action_idx(action_idx), move_number(move_number_)
+          opponent_color(turn == Utils::BLACK ? Utils::WHITE : Utils::BLACK), 
+          prior_p(prior), board_state(current_board), move_number(move_number_)
     {
         static size_t debug_id_counter = 1;
         debug_id = debug_id_counter++;
@@ -119,16 +117,8 @@ struct ThreadSafeNode {
             child.store(nullptr, std::memory_order_relaxed);
         }
         
-        std::optional<std::pair<WEIGHT_T, WEIGHT_T>> last_move = {};
         bool game_ended = false;
         float game_result = 0.0f;
-        
-        if (prior_action_idx != -1) {
-            auto [r, c] = Utils::index_to_coordinate(prior_action_idx);
-            board_state[r][c] = opponent_color;
-            last_move = {r, c};
-            std::tie(game_ended, game_result) = ended();
-        }
         
         if (game_ended) {
             is_end_node = true;
@@ -138,7 +128,7 @@ struct ThreadSafeNode {
         } else {
             // 去掉启发式初始化，等待神经网络评估
             // 初始化策略和价值为0，等待神经网络填充
-            for (auto& v : pi) v = 0.0f;
+            pi = decltype(pi){};
             value = 0.0f;
             
             // 非结束节点设置为UNEVALUATED，等待神经网络评估
@@ -326,6 +316,21 @@ struct ThreadSafeNode {
         state.store(NodeState::EXPANDED, std::memory_order_seq_cst);
     }
     
+    // 设置推理结果并完成评估
+    void setInferenceResult(const Network::PolicyOut_T& policy, const Network::ValueOut_T& inference_value) {
+      // Copy the top-left 15x15 of the policy to pi
+      for (int r = 0; r < 15; ++r) {
+        for (int c = 0; c < 15; ++c) {
+          pi[r * 15 + c] = policy[r * 19 + c];
+        }
+      }
+      // Copy the last element of the policy to pi[255]
+      pi[255] = policy[19 * 19];
+      
+      value = inference_value;
+      finishEvaluation();
+    }
+    
     // 检查是否正在评估
     bool isEvaluating() const {
         return state.load(std::memory_order_acquire) == NodeState::EVALUATING;
@@ -369,7 +374,7 @@ private:
 public:
     std::shared_ptr<ThreadSafeNode> get_root() const { return root; }
     MultiThreadHelpers::MutexPool& get_mutex_pool() { return mutex_pool; }
-    ThreadSafeMCTS_Agent_Tmpl(const Board &initial_board, AlphaGomoku::STONE_COLOR player_color, 
+    ThreadSafeMCTS_Agent_Tmpl(const Board &initial_board, Utils::STONE_COLOR player_color, 
                         NetworkType &network, 
                         NodeTable& node_table,
                         const MultiThreadHelpers::MultiThreadConfig& mt_config = MultiThreadHelpers::MultiThreadConfig::getDefault())
@@ -389,9 +394,8 @@ public:
     void apply_move(int move_idx, NodeTable& node_table);
     int next_move_idx() const;
     const MultiThreadHelpers::SearchStats& get_search_stats() const { return search_stats; }
-    int last_move_idx() const { return root->prior_action_idx; }
-    AlphaGomoku::STONE_COLOR last_move_color() const { return root->current_color; }
-    AlphaGomoku::STONE_COLOR next_move_color() const { return root->opponent_color; }
+    Utils::STONE_COLOR last_move_color() const { return root->current_color; }
+    Utils::STONE_COLOR next_move_color() const { return root->opponent_color; }
     const Board &last_move_board() const { return root->board_state; }
     
     // 添加获取统计信息的方法
@@ -654,9 +658,9 @@ int ThreadSafeMCTS_Agent_Tmpl<NetworkType>::next_move_idx() const {
         // 检查水平、垂直和对角线
         for (int row = 0; row < Config::BOARD_SIZE; ++row) {
             for (int col = 0; col < Config::BOARD_SIZE; ++col) {
-                if (board[row][col] == Config::EMPTY_STONE) continue;
+                if (board[row][col] == Utils::EMPTY) continue;
                 
-                AlphaGomoku::STONE_COLOR color = board[row][col];
+                Utils::STONE_COLOR color = board[row][col];
                 
                 // 检查水平
                 if (col <= Config::BOARD_SIZE - 5) {
@@ -729,7 +733,7 @@ int ThreadSafeMCTS_Agent_Tmpl<NetworkType>::next_move_idx() const {
     // 线程安全：使用分片锁确保多线程环境下的安全性
     // 节点复用：避免重复创建相同状态的节点，节省内存
     //========================================================================================
-    inline NodeTable::NodePtr NodeTable::get_or_create(const Board& board, AlphaGomoku::STONE_COLOR player, int move_number, std::function<NodePtr()> node_factory) {
+    inline NodeTable::NodePtr NodeTable::get_or_create(const Board& board, Utils::STONE_COLOR player, int move_number, std::function<NodePtr()> node_factory) {
        // 使用基础hash，冲突概率极低
         Hash128 hash = Zobrist::hash(board, player, move_number);
         

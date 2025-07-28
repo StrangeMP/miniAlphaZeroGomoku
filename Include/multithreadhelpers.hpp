@@ -9,13 +9,12 @@
 #include <vector>
 #include <functional>
 #include <future>
-#include <array>
+#include <utils.hpp>
 #include "config.hpp"
-#include "network.hpp"
 #include "compute.hpp"  // 为了Matrix类型
 
 // 前向声明和类型定义
-using Board = Matrix<AlphaGomoku::STONE_COLOR, Config::BOARD_SIZE, Config::BOARD_SIZE>;
+using Board = Matrix<Utils::STONE_COLOR, Config::BOARD_SIZE, Config::BOARD_SIZE>;
 
 namespace MultiThreadHelpers {
 
