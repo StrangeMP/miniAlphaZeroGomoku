@@ -91,9 +91,13 @@ struct ThreadSafeNode {
   Board board_state;
 
   // 使用原子shared_ptr数组管理子节点，采用KataGo风格的原子操作
-  std::array<std::atomic<std::shared_ptr<ThreadSafeNode>>, Config::BOARD_SQUARES> children;
+  // 支持pass move: 索引 BOARD_SQUARES 表示pass move
+  std::array<std::atomic<std::shared_ptr<ThreadSafeNode>>, Config::BOARD_SQUARES + 1> children;
 
   Vec<float, Config::BOARD_SQUARES + 1> pi;
+
+  // pass move 相关
+  bool is_pass_move = false; // 标记当前节点是否为pass move
   float value;
   int move_number = 0; // 新增：当前节点的步数
 
@@ -102,7 +106,8 @@ struct ThreadSafeNode {
   ThreadSafeNode(ThreadSafeNode *parent_, float prior, Utils::STONE_COLOR turn, const Board &current_board,
                  int action_idx, Network &net, int move_number_ = 0)
       : parent(parent_), current_color(turn), opponent_color(turn == Utils::BLACK ? Utils::WHITE : Utils::BLACK),
-        prior_p(prior), board_state(current_board), move_number(move_number_) {
+        prior_p(prior), board_state(current_board), move_number(move_number_),
+        is_pass_move(action_idx == Config::BOARD_SQUARES) {
     static size_t debug_id_counter = 1;
     debug_id = debug_id_counter++;
 
@@ -113,6 +118,14 @@ struct ThreadSafeNode {
 
     bool game_ended = false;
     float game_result = 0.0f;
+
+    if (action_idx != -1) {
+      if (!is_pass_move) {
+        auto [r, c] = Utils::index_to_coordinate(action_idx);
+        board_state[r][c] = opponent_color;
+      }
+      std::tie(game_ended, game_result) = ended();
+    }
 
     if (game_ended) {
       is_end_node = true;
@@ -150,7 +163,7 @@ struct ThreadSafeNode {
     float max_score = -std::numeric_limits<float>::infinity();
     int min_virtual_loss = std::numeric_limits<int>::max();
 
-    for (int i = 0; i < Config::BOARD_SQUARES; ++i) {
+    for (int i = 0; i <= Config::BOARD_SQUARES; ++i) {
       if (!legal_moves_vec[i])
         continue;
 
@@ -190,7 +203,7 @@ struct ThreadSafeNode {
 
   std::shared_ptr<ThreadSafeNode> create_child(int action_idx, Network &net, NodeTable &node_table,
                                                MultiThreadHelpers::MutexPool &mutex_pool) {
-    if (action_idx < 0 || action_idx >= static_cast<int>(children.size())) {
+    if (action_idx < 0 || action_idx > Config::BOARD_SQUARES) {
       return nullptr;
     }
 
@@ -202,7 +215,9 @@ struct ThreadSafeNode {
     }
 
     Board next_board = board_state;
-    if (action_idx != -1) {
+
+    // 处理pass move: 如果是pass move (action_idx == BOARD_SQUARES)，不修改棋盘
+    if (action_idx != -1 && action_idx != Config::BOARD_SQUARES) {
       auto [r, c] = Utils::index_to_coordinate(action_idx);
       next_board[r][c] = opponent_color;
     }
@@ -210,7 +225,7 @@ struct ThreadSafeNode {
     int child_move_number = this->move_number + 1;
 
     auto node_factory = [&]() {
-      return std::make_shared<ThreadSafeNode>(this, pi[action_idx], opponent_color, next_board, action_idx, net,
+      return std::make_shared<ThreadSafeNode>(this, pi[action_idx], opponent_color, board_state, action_idx, net,
                                               child_move_number);
     };
     auto new_child = node_table.get_or_create(next_board, opponent_color, child_move_number, node_factory);

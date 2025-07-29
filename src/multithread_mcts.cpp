@@ -33,6 +33,11 @@ void ThreadSafeNode::backpropagate() {
 }
 
 std::pair<bool, float> ThreadSafeNode::ended() const {
+  // 检查连续pass的情况：如果当前节点和父节点都是pass move，则游戏结束，结果为平局
+  if (is_pass_move && parent && parent->is_pass_move) {
+    return {true, 0.0f}; // 平局
+  }
+
   // 检查是否有五子连线（从原始实现复制）
   const auto &board = board_state;
 
@@ -310,7 +315,8 @@ int MCTSAgent::next_move_idx() const {
   int max_visits = -1;
   int best_move_idx = -1;
   // 不再需要锁，因为children现在使用原子操作
-  for (int i = 0; i < Config::BOARD_SQUARES; ++i) {
+  // 检查所有可能的移动，包括pass move (索引 BOARD_SQUARES)
+  for (int i = 0; i <= Config::BOARD_SQUARES; ++i) {
     auto child = root->children[i].load(std::memory_order_acquire);
     if (child) {
       int visits = child->stats.getVisitCount();

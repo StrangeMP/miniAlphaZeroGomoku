@@ -1,6 +1,7 @@
 #pragma once
 #include "config.hpp"
 #include "hash128.hpp"
+#include "utils.hpp"
 #include <random>
 #include <cstddef>
 #include <array>
