@@ -2,6 +2,7 @@
 #include "ForbiddenPointFinder.h"
 #include "config.hpp"
 #include "dispatcher.hpp"
+#include "multithread_mcts.hpp"
 #include <NvInfer.h>
 #include <cstddef>
 #include <fstream>
@@ -30,11 +31,11 @@ struct TensorRTState {
   cudaStream_t stream;
 
   // Store tensor names
-  std::string input_binary_name;
-  std::string input_global_name;
-  std::string input_mask_name;
-  std::string output_policy_name;
-  std::string output_value_name;
+  std::string input_binary_name = "input_spatial";
+  std::string input_global_name = "input_global";
+  std::string input_mask_name = "input_mask";
+  std::string output_policy_name = "policy_logits";
+  std::string output_value_name = "value_logits";
 
   TensorRTState() {
     runtime.reset(nvinfer1::createInferRuntime(logger));
@@ -63,13 +64,6 @@ struct TensorRTState {
     if (cudaStreamCreate(&stream) != cudaSuccess) {
       throw std::runtime_error("Failed to create CUDA stream");
     }
-
-    // Get I/O tensor names from the engine
-    input_binary_name = engine->getIOTensorName(0);
-    input_global_name = engine->getIOTensorName(1);
-    input_mask_name = engine->getIOTensorName(2);
-    output_policy_name = engine->getIOTensorName(3);
-    output_value_name = engine->getIOTensorName(4);
   }
 
   ~TensorRTState() { cudaStreamDestroy(stream); }
@@ -173,6 +167,8 @@ Network::InputUnit_T Network::prepareInput(const Matrix<Utils::STONE_COLOR, BOAR
   };
   auto p_input = get_input_template();
   auto &[binary, global, mask] = p_input;
+  global[5] = player == Utils::BLACK ? -1.0f : 1.0f;
+  mask[TENSOR_SIZE * TENSOR_SIZE] = 1.0f; // pass move is always valid
   CForbiddenPointFinder fpf(board);
   for (size_t r = 0; r < BOARD_SIZE; ++r) {
     for (size_t c = 0; c < BOARD_SIZE; ++c) {

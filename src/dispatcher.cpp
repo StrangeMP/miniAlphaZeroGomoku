@@ -1,7 +1,9 @@
 #include "dispatcher.hpp"
 #include "config.hpp"
 #include "multithread_mcts.hpp"
+#include "network.hpp"
 #include <chrono>
+#include <print>
 #include <stdexcept>
 
 InferenceDispatcher &InferenceDispatcher::getInstance() {
@@ -156,19 +158,21 @@ void InferenceDispatcher::submitterLoop() {
       last_submission_time = std::chrono::steady_clock::now();
     } else {
       // No full batch was ready. Check if the active batch has waited long enough.
-      if (shutting_down_.load()) continue;
+      if (shutting_down_.load())
+        continue;
 
-      Batch* active_batch = active_batch_.load();
+      Batch *active_batch = active_batch_.load();
       if (active_batch != nullptr && active_batch->item_count > 0) {
         auto now = std::chrono::steady_clock::now();
-        auto time_since_last_submission = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_submission_time);
+        auto time_since_last_submission =
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - last_submission_time);
 
         if (time_since_last_submission.count() > 5) { // 5ms timeout
           // Atomically swap the active batch with a new one
           std::lock_guard<std::mutex> lock(batch_swap_mutex_);
           active_batch = active_batch_.load(); // Re-load in case it changed
           if (active_batch != nullptr && active_batch->item_count > 0) {
-            Batch* next_batch = nullptr;
+            Batch *next_batch = nullptr;
             if (available_batches_.try_dequeue(next_batch)) {
               active_batch_.store(next_batch);
               collector_cv_.notify_all();
@@ -186,7 +190,8 @@ void InferenceDispatcher::submitterLoop() {
     if (dequeued) {
       // Submit the batch for asynchronous execution on its own stream
       const int batch_size = batch_to_process->item_count;
-      if (batch_size == 0) continue;
+      if (batch_size == 0)
+        continue;
 
       const size_t binary_size = batch_size * sizeof(Network::BinaryInputUnit_T);
       const size_t global_size = batch_size * sizeof(Network::GlobalInputUnit_T);
@@ -198,12 +203,12 @@ void InferenceDispatcher::submitterLoop() {
                       cudaMemcpyHostToDevice, batch_to_process->stream);
       cudaMemcpyAsync(batch_to_process->d_global_input, batch_to_process->global_inputs, global_size,
                       cudaMemcpyHostToDevice, batch_to_process->stream);
-      cudaMemcpyAsync(batch_to_process->d_mask_input, batch_to_process->mask_inputs, mask_size,
-                      cudaMemcpyHostToDevice, batch_to_process->stream);
+      cudaMemcpyAsync(batch_to_process->d_mask_input, batch_to_process->mask_inputs, mask_size, cudaMemcpyHostToDevice,
+                      batch_to_process->stream);
 
-      Network::feed(batch_to_process->d_binary_input, batch_to_process->d_global_input,
-                    batch_to_process->d_mask_input, batch_to_process->d_policy_output,
-                    batch_to_process->d_value_output, batch_size, batch_to_process->stream);
+      Network::feed(batch_to_process->d_binary_input, batch_to_process->d_global_input, batch_to_process->d_mask_input,
+                    batch_to_process->d_policy_output, batch_to_process->d_value_output, batch_size,
+                    batch_to_process->stream);
 
       cudaMemcpyAsync(batch_to_process->policy_outputs, batch_to_process->d_policy_output, policy_size,
                       cudaMemcpyDeviceToHost, batch_to_process->stream);
@@ -222,31 +227,21 @@ void InferenceDispatcher::reaperLoop() {
   while (running_.load() || in_flight_batches_.size_approx() > 0) {
     // Wait for a batch to finish processing
     if (in_flight_batches_.wait_dequeue_timed(completed_batch, std::chrono::milliseconds(10))) {
-      try {
-        // Block until this specific batch's event is complete
-        cudaEventSynchronize(completed_batch->event);
+      // try {
+      // Block until this specific batch's event is complete
+      std::println("Waiting for batch to complete...");
+      cudaEventSynchronize(completed_batch->event);
+      std::println("Batch completed. Setting results on nodes...");
 
-        // This batch is done. Set inference results on nodes.
-        for (int i = 0; i < completed_batch->item_count; ++i) {
-          MultiThreadMCTS::ThreadSafeNode *node = completed_batch->node_pointers[i];
-          if (node) {
-            const auto &policy = completed_batch->policy_outputs[i];
-            const auto &value_vec = completed_batch->value_outputs[i];
+      // This batch is done. Set inference results on nodes.
+      for (int i = 0; i < completed_batch->item_count; ++i) {
+        MultiThreadMCTS::ThreadSafeNode *node = completed_batch->node_pointers[i];
+        if (node) {
+          const auto &policy = completed_batch->policy_outputs[i];
+          const auto &value_vec = completed_batch->value_outputs[i];
 
-            // Set the inference result on the node
-            node->setInferenceResult(policy, value_vec);
-          }
-        }
-      } catch (const std::exception &e) {
-        // On exception, we should still try to set some default result for nodes
-        // or mark them as failed evaluation, but for now just log the error
-        for (int i = 0; i < completed_batch->item_count; ++i) {
-          MultiThreadMCTS::ThreadSafeNode *node = completed_batch->node_pointers[i];
-          if (node) {
-            // Set default/error result - zero policy and neutral value
-            Vec<float, Config::BOARD_SQUARES> policy{};
-            node->setInferenceResult(policy, 0.0f);
-          }
+          // Set the inference result on the node
+          node->setInferenceResult(policy, value_vec);
         }
       }
 

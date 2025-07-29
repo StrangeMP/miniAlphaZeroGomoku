@@ -19,11 +19,20 @@ endif()
 # Add compiler flags
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall")
-    set(CMAKE_CXX_FLAGS_DEBUG "-g")
+    set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -Wall")
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     set(CMAKE_CXX_FLAGS_RELEASE "/O2 /W3")
-    set(CMAKE_CXX_FLAGS_DEBUG "/Zi")
+    set(CMAKE_CXX_FLAGS_DEBUG "/Zi /Od /W3")
 endif()
+
+if(CMAKE_CUDA_COMPILER)
+    set(CMAKE_CUDA_FLAGS_RELEASE "-O3")
+    set(CMAKE_CUDA_FLAGS_DEBUG "-G -lineinfo")
+endif()
+
+# Apply flags based on the build type
+set(CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS_${CMAKE_BUILD_TYPE}})
+set(CMAKE_CUDA_FLAGS ${CMAKE_CUDA_FLAGS_${CMAKE_BUILD_TYPE}})
 
 # Add include directory
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -77,32 +86,40 @@ file(GLOB_RECURSE MAIN_SOURCES CONFIGURE_DEPENDS
 # Add the main executable
 add_executable(main ${MAIN_SOURCES})
 
-# Add the test executable
-add_executable(test_dispatcher src/test_dispatcher.cpp src/dispatcher.cpp src/network.cpp src/ForbiddenPointFinder.cpp)
+# Add compile definitions for Debug and Release after defining the targets
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_definitions(main PRIVATE DEBUG)
+elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
+    target_compile_definitions(main PRIVATE NDEBUG)
+endif()
 
-# Add compile definitions
-target_compile_definitions(main PRIVATE DEBUG)
-target_compile_definitions(test_dispatcher PRIVATE DEBUG)
+# Add run_nn_inference executable
+add_executable(run_nn_inference src/run_nn_inference.cpp src/network.cpp src/dispatcher.cpp src/ForbiddenPointFinder.cpp)
+
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_definitions(run_nn_inference PRIVATE DEBUG)
+elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
+    target_compile_definitions(run_nn_inference PRIVATE NDEBUG)
+endif()
 
 # Find and link threading library
 find_package(Threads REQUIRED)
 # Link libraries
 target_link_libraries(main PRIVATE Threads::Threads)
-target_link_libraries(test_dispatcher PRIVATE Threads::Threads)
+target_link_libraries(run_nn_inference PRIVATE Threads::Threads)
 
 # Link TensorRT libraries if found
 if(TENSORRT_FOUND)
     target_link_libraries(main PRIVATE ${TENSORRT_LIBRARIES})
-    target_link_libraries(test_dispatcher PRIVATE ${TENSORRT_LIBRARIES})
+    target_link_libraries(run_nn_inference PRIVATE ${TENSORRT_LIBRARIES})
     target_compile_definitions(main PRIVATE TENSORRT_ENABLED)
-    target_compile_definitions(test_dispatcher PRIVATE TENSORRT_ENABLED)
+    target_compile_definitions(run_nn_inference PRIVATE TENSORRT_ENABLED)
     message(STATUS "TensorRT libraries linked to executables")
 endif()
 
-# Link CUDA runtime library to test_dispatcher
-target_link_libraries(test_dispatcher PRIVATE cudart)
+target_link_libraries(run_nn_inference PRIVATE cudart)
 
 # Specify output directory for the executable
 set_target_properties(main PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
-set_target_properties(test_dispatcher PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+set_target_properties(run_nn_inference PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 

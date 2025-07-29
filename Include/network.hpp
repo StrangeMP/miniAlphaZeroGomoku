@@ -1,12 +1,14 @@
 #pragma once
 #include "compute.hpp"
-#include "multithread_mcts.hpp"
 #include "utils.hpp"
 #include <cstddef>
 #include <cuda_runtime.h>
-#include <memory>
 #include <tuple>
 #include <utility>
+
+namespace MultiThreadMCTS {
+  struct ThreadSafeNode;
+}
 
 struct Network {
   using WEIGHT_T = float;
@@ -15,6 +17,7 @@ struct Network {
   static constexpr size_t IN_BIN_CHANNELS = 22;
   static constexpr size_t IN_GLOBAL_CHANNELS = 39;
   static constexpr size_t MASK_SIZE = TENSOR_SIZE * TENSOR_SIZE + 1;
+  static constexpr size_t PASS_IDX = BOARD_SIZE * BOARD_SIZE; // 225
   /*
 --- TensorRT Inference Results ---
 Policy Logits:
@@ -33,7 +36,7 @@ Value Logits:
   using GlobalInputUnit_T = Vec<WEIGHT_T, IN_GLOBAL_CHANNELS>;
   using MaskInputUnit_T = Vec<WEIGHT_T, MASK_SIZE>;
   using InputUnit_T = std::tuple<BinaryInputUnit_T, GlobalInputUnit_T, MaskInputUnit_T>;
-  using PolicyOut_T = Vec<float, TENSOR_SIZE * TENSOR_SIZE + 1>;
+  using PolicyOut_T = Vec<float, BOARD_SIZE * BOARD_SIZE + 1>;
   using ValueOut_T = Vec<float, 3>;
   using RetType = std::pair<PolicyOut_T, ValueOut_T>;
 
@@ -41,7 +44,7 @@ Value Logits:
                    void *d_value_output, int batch_size, cudaStream_t stream);
   static void evaluate(MultiThreadMCTS::ThreadSafeNode* node);
 
-private:
+// private:
   static InputUnit_T prepareInput(const Matrix<Utils::STONE_COLOR, BOARD_SIZE, BOARD_SIZE> &board,
                                                    Utils::STONE_COLOR player);
 };
