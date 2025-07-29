@@ -21,8 +21,8 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang
     set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall")
     set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -Wall")
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
-    set(CMAKE_CXX_FLAGS_RELEASE "/O2 /W3")
-    set(CMAKE_CXX_FLAGS_DEBUG "/Zi /Od /W3")
+    set(CMAKE_CXX_FLAGS_RELEASE "/O2 /W3 /utf-8")
+    set(CMAKE_CXX_FLAGS_DEBUG "/Zi /Od /W3 /utf-8")
 endif()
 
 if(CMAKE_CUDA_COMPILER)
@@ -81,6 +81,9 @@ file(GLOB_RECURSE MAIN_SOURCES CONFIGURE_DEPENDS
     "src/network.cpp"
     "src/dispatcher.cpp"
     "src/ForbiddenPointFinder.cpp"
+    "src/multithread_mcts.cpp"
+    "src/multithreadhelpers.cpp"
+    "src/zobrist.cpp"
 )
 
 # Add the main executable
@@ -118,6 +121,7 @@ if(TENSORRT_FOUND)
 endif()
 
 target_link_libraries(run_nn_inference PRIVATE cudart)
+target_link_libraries(main PRIVATE cudart)
 
 # Specify output directory for the executable
 set_target_properties(main PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})

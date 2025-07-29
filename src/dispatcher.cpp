@@ -39,6 +39,8 @@ InferenceDispatcher::InferenceDispatcher() {
   for (auto &batch : batch_pool_) {
     available_batches_.enqueue(batch.get());
   }
+
+  start();
 }
 
 InferenceDispatcher::~InferenceDispatcher() {
