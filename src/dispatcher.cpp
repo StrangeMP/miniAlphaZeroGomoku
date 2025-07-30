@@ -1,8 +1,6 @@
 #include "dispatcher.hpp"
 #include "config.hpp"
-#include "multithread_mcts.hpp"
 #include "network.hpp"
-#include "AsyncLogger.hpp"
 #include <chrono>
 #include <stdexcept>
 
@@ -22,7 +20,7 @@ InferenceDispatcher::InferenceDispatcher() {
     cudaMallocHost(&batch->mask_inputs, Config::MAX_BATCH_SIZE * sizeof(Network::MaskInputUnit_T));
     cudaMallocHost(&batch->policy_outputs, Config::MAX_BATCH_SIZE * sizeof(Network::PolicyOut_T));
     cudaMallocHost(&batch->value_outputs, Config::MAX_BATCH_SIZE * sizeof(Network::ValueOut_T));
-    batch->node_pointers.resize(Config::MAX_BATCH_SIZE);
+    batch->promises.resize(Config::MAX_BATCH_SIZE);
 
     // Allocate GPU memory and create CUDA resources once
     cudaStreamCreate(&batch->stream);
@@ -94,20 +92,15 @@ void InferenceDispatcher::stop() {
     reaper_thread_->join();
 }
 
-void InferenceDispatcher::collect(const Network::BinaryInputUnit_T &binary_input,
-                                  const Network::GlobalInputUnit_T &global_input,
-                                  const Network::MaskInputUnit_T &mask_input, MultiThreadMCTS::ThreadSafeNode *node) {
+std::future<Network::ResultPtr> InferenceDispatcher::collect(const Network::BinaryInputUnit_T &binary_input,
+                                                             const Network::GlobalInputUnit_T &global_input,
+                                                             const Network::MaskInputUnit_T &mask_input) {
   if (!running_.load() || shutting_down_.load()) {
     throw std::runtime_error("Dispatcher is not running or shutting down.");
   }
 
-  if (!node) {
-    throw std::invalid_argument("Node pointer cannot be null");
-  }
-
   Batch *current_batch;
   int slot;
-  AsyncLogger::getInstance().log("Collecting inference request for node {}", node->debug_id);
 
   {
     // Lock to protect the check-then-act sequence for getting a slot
@@ -130,9 +123,7 @@ void InferenceDispatcher::collect(const Network::BinaryInputUnit_T &binary_input
     current_batch->binary_inputs[slot] = binary_input;
     current_batch->global_inputs[slot] = global_input;
     current_batch->mask_inputs[slot] = mask_input;
-    current_batch->node_pointers[slot] = node;
-
-    AsyncLogger::getInstance().log("Collected request for node {} into slot {}", node->debug_id, slot);
+    current_batch->promises[slot] = std::promise<Network::ResultPtr>();
 
     // If this request filled the batch, swap it out for a new one
     if (slot + 1 >= Config::MAX_BATCH_SIZE) {
@@ -149,6 +140,8 @@ void InferenceDispatcher::collect(const Network::BinaryInputUnit_T &binary_input
       pending_processing_.enqueue(current_batch);
     }
   }
+
+  return current_batch->promises[slot].get_future();
 }
 
 void InferenceDispatcher::submitterLoop() {
@@ -223,8 +216,6 @@ void InferenceDispatcher::submitterLoop() {
 
       // Move the batch to the in-flight queue
       in_flight_batches_.enqueue(batch_to_process);
-
-      AsyncLogger::getInstance().log("Submitted batch of size {} for processing", batch_size);
     }
   }
 }
@@ -238,16 +229,11 @@ void InferenceDispatcher::reaperLoop() {
 
       // This batch is done. Set inference results on nodes.
       for (int i = 0; i < completed_batch->item_count; ++i) {
-        MultiThreadMCTS::ThreadSafeNode *node = completed_batch->node_pointers[i];
-        if (node) {
-          const auto &policy = completed_batch->policy_outputs[i];
-          const auto &value_vec = completed_batch->value_outputs[i];
+        const auto &policy = completed_batch->policy_outputs[i];
+        const auto &value_vec = completed_batch->value_outputs[i];
 
-          // Set the inference result on the node
-          node->setInferenceResult(policy, value_vec);
-
-          AsyncLogger::getInstance().log("Set results for node {}", node->debug_id);
-        }
+        completed_batch->promises[i].set_value(std::make_unique<Network::ResultType>(policy, value_vec));
+        completed_batch->promises[i] = std::promise<Network::ResultPtr>();
       }
 
       // Reset and recycle the batch regardless of success or failure

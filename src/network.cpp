@@ -2,12 +2,10 @@
 #include "ForbiddenPointFinder.h"
 #include "config.hpp"
 #include "dispatcher.hpp"
-#include "multithread_mcts.hpp"
 #include <NvInfer.h>
 #include <cstddef>
 #include <fstream>
 #include <iostream>
-#include <memory>
 #include <print>
 #include <vector>
 
@@ -97,17 +95,15 @@ void Network::feed(void *d_binary_input, void *d_global_input, void *d_mask_inpu
   g_trt_state.context->enqueueV3(stream);
 }
 
-void Network::evaluate(MultiThreadMCTS::ThreadSafeNode *node) {
-  if (!node) {
-    throw std::invalid_argument("Node pointer cannot be null");
-  }
+Network::ResultPtr Network::evaluate(const Utils::Board &board, Utils::STONE_COLOR player) {
   static auto &dispatcher = InferenceDispatcher::getInstance();
 
-  // Prepare input from node's board state
-  auto [binary_input, global_input, mask_input] = prepareInput(node->board_state, node->current_color);
+  // Prepare input from board state
+  auto [binary_input, global_input, mask_input] = prepareInput(board, player);
 
   // Submit to dispatcher
-  dispatcher.collect(binary_input, global_input, mask_input, node);
+  auto future = dispatcher.collect(binary_input, global_input, mask_input);
+  return future.get();
 }
 
 Network::InputUnit_T Network::prepareInput(const Matrix<Utils::STONE_COLOR, BOARD_SIZE, BOARD_SIZE> &board,

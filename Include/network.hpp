@@ -6,8 +6,8 @@
 #include <tuple>
 #include <utility>
 
-namespace MultiThreadMCTS {
-  struct ThreadSafeNode;
+namespace MCTS {
+  struct Node;
 }
 
 struct Network {
@@ -26,9 +26,9 @@ Policy Logits:
   - Size (total elements): 362
 
 Value Logits:
-  - Shape: (1, 3)
+  - Shape: (1, 1)
   - DType: float32
-  - Size (total elements): 3
+  - Size (total elements): 1
   */
 
   //
@@ -37,12 +37,13 @@ Value Logits:
   using MaskInputUnit_T = Vec<WEIGHT_T, MASK_SIZE>;
   using InputUnit_T = std::tuple<BinaryInputUnit_T, GlobalInputUnit_T, MaskInputUnit_T>;
   using PolicyOut_T = Vec<float, BOARD_SIZE * BOARD_SIZE + 1>;
-  using ValueOut_T = Vec<float, 3>;
-  using RetType = std::pair<PolicyOut_T, ValueOut_T>;
+  using ValueOut_T = float;
+  using ResultType = std::pair<PolicyOut_T, ValueOut_T>;
+  using ResultPtr = std::unique_ptr<ResultType>;
 
   static void feed(void *d_binary_input, void *d_global_input, void *d_mask_input, void *d_policy_output,
                    void *d_value_output, int batch_size, cudaStream_t stream);
-  static void evaluate(MultiThreadMCTS::ThreadSafeNode* node);
+  static ResultPtr evaluate(const Utils::Board &board, Utils::STONE_COLOR player);
 
 // private:
   static InputUnit_T prepareInput(const Matrix<Utils::STONE_COLOR, BOARD_SIZE, BOARD_SIZE> &board,

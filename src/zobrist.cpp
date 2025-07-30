@@ -1,4 +1,4 @@
-#include "../Include/zobrist.hpp"
+#include "zobrist.hpp"
 
 namespace Zobrist {
 std::array<std::array<std::array<Hash128, COLOR_N>, BOARD_SIZE>, BOARD_SIZE> zobrist_table = {};
