@@ -174,8 +174,7 @@ int main(int argc, char *argv[]) {
     std::println("Updated board state written to {}", argv[1]);
 
     // Assuming ValueOut_T is an array-like container with at least one element.
-    std::println("Value Head Output: win-prob {}, lose-prob {}, draw-prob {}", value_output[0], value_output[1],
-                 value_output[2]);
+    std::println("Value Head Output: {}", value_output);
 
   } catch (const std::exception &e) {
     std::println("Error: {}", e.what());

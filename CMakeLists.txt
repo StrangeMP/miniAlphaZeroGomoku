@@ -81,9 +81,6 @@ file(GLOB_RECURSE MAIN_SOURCES CONFIGURE_DEPENDS
     "src/network.cpp"
     "src/dispatcher.cpp"
     "src/ForbiddenPointFinder.cpp"
-    "src/multithread_mcts.cpp"
-    "src/multithreadhelpers.cpp"
-    "src/zobrist.cpp"
 )
 
 # Add the main executable
@@ -105,6 +102,15 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     target_compile_definitions(run_nn_inference PRIVATE NDEBUG)
 endif()
 
+# Add dummy executable (lightweight, no external libraries)
+add_executable(dummy src/dummy.cpp)
+
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+    target_compile_definitions(dummy PRIVATE DEBUG)
+elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
+    target_compile_definitions(dummy PRIVATE NDEBUG)
+endif()
+
 # Find and link threading library
 find_package(Threads REQUIRED)
 # Link libraries
@@ -115,15 +121,19 @@ target_link_libraries(run_nn_inference PRIVATE Threads::Threads)
 if(TENSORRT_FOUND)
     target_link_libraries(main PRIVATE ${TENSORRT_LIBRARIES})
     target_link_libraries(run_nn_inference PRIVATE ${TENSORRT_LIBRARIES})
+    target_link_libraries(dummy PRIVATE ${TENSORRT_LIBRARIES})
     target_compile_definitions(main PRIVATE TENSORRT_ENABLED)
     target_compile_definitions(run_nn_inference PRIVATE TENSORRT_ENABLED)
+    target_compile_definitions(dummy PRIVATE TENSORRT_ENABLED)
     message(STATUS "TensorRT libraries linked to executables")
 endif()
 
 target_link_libraries(run_nn_inference PRIVATE cudart)
 target_link_libraries(main PRIVATE cudart)
+target_link_libraries(dummy PRIVATE cudart)
 
 # Specify output directory for the executable
 set_target_properties(main PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 set_target_properties(run_nn_inference PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+set_target_properties(dummy PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 

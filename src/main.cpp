@@ -2,7 +2,6 @@
 #include "gomoku_record.hpp"
 #include "mcts.hpp"
 #include "network.hpp"
-#include "zobrist.hpp"
 #include <chrono>
 #include <fstream>
 #include <iomanip>
@@ -368,8 +367,6 @@ public:
       std::cout << "You go first, please input 2 coordinates\n";
       apply_fixed_opening(board, 4);
     }
-    
-    Zobrist::init();
 
     // 1. 打印当前开局棋盘
     std::cout << "\n=== Current Opening Board ===\n";
