@@ -63,7 +63,6 @@ public:
     // Allocate Device memory
     CUDA_CHECK(cudaMalloc(&d_binary_input, sizeof(Network::BinaryInputUnit_T)));
     CUDA_CHECK(cudaMalloc(&d_global_input, sizeof(Network::GlobalInputUnit_T)));
-    CUDA_CHECK(cudaMalloc(&d_mask_input, sizeof(Network::MaskInputUnit_T)));
     CUDA_CHECK(cudaMalloc(&d_policy_output, sizeof(Network::PolicyOut_T)));
     CUDA_CHECK(cudaMalloc(&d_value_output, sizeof(Network::ValueOut_T)));
 
@@ -75,26 +74,22 @@ public:
     // Clean up
     CUDA_CHECK(cudaFree(d_binary_input));
     CUDA_CHECK(cudaFree(d_global_input));
-    CUDA_CHECK(cudaFree(d_mask_input));
     CUDA_CHECK(cudaFree(d_policy_output));
     CUDA_CHECK(cudaFree(d_value_output));
     CUDA_CHECK(cudaStreamDestroy(stream));
   }
 
   void run(const Network::BinaryInputUnit_T &binary_input, const Network::GlobalInputUnit_T &global_input,
-           const Network::MaskInputUnit_T &mask_input, Network::PolicyOut_T &policy_output,
-           Network::ValueOut_T &value_output) {
+           Network::PolicyOut_T &policy_output, Network::ValueOut_T &value_output) {
     // Copy inputs from host to device
     CUDA_CHECK(cudaMemcpyAsync(d_binary_input, &binary_input, sizeof(Network::BinaryInputUnit_T),
                                cudaMemcpyHostToDevice, stream));
     CUDA_CHECK(cudaMemcpyAsync(d_global_input, &global_input, sizeof(Network::GlobalInputUnit_T),
                                cudaMemcpyHostToDevice, stream));
-    CUDA_CHECK(
-        cudaMemcpyAsync(d_mask_input, &mask_input, sizeof(Network::MaskInputUnit_T), cudaMemcpyHostToDevice, stream));
 
     // Run NN inference
     std::println("Running inference...");
-    Network::feed(d_binary_input, d_global_input, d_mask_input, d_policy_output, d_value_output, 1, stream);
+    Network::feed(d_binary_input, d_global_input, d_policy_output, d_value_output, 1, stream);
     std::println("Inference submitted.");
 
     // Copy outputs from device to host
@@ -110,7 +105,7 @@ public:
 
 private:
   // Device memory
-  void *d_binary_input, *d_global_input, *d_mask_input;
+  void *d_binary_input, *d_global_input;
   void *d_policy_output, *d_value_output;
 
   // CUDA stream
@@ -127,13 +122,13 @@ int main(int argc, char *argv[]) {
     auto [board, player] = readBoardFromFile(argv[1]);
 
     // 2. Prepare network input
-    auto [binary_input, global_input, mask_input] = Network::prepareInput(board, player);
+    auto [binary_input, global_input] = Network::prepareInput(board, player);
 
     // 3. Encapsulated Inference
     StandaloneInference inference;
     Network::PolicyOut_T policy_output;
     Network::ValueOut_T value_output;
-    inference.run(binary_input, global_input, mask_input, policy_output, value_output);
+    inference.run(binary_input, global_input, policy_output, value_output);
 
     // 4. Print results
     std::print("Policy Output:\n");

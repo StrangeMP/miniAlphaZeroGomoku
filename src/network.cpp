@@ -31,7 +31,6 @@ struct TensorRTState {
   // Store tensor names
   std::string input_binary_name = "input_spatial";
   std::string input_global_name = "input_global";
-  std::string input_mask_name = "input_mask";
   std::string output_policy_name = "policy_logits";
   std::string output_value_name = "value_logits";
 
@@ -70,7 +69,7 @@ struct TensorRTState {
 // File-static instance, initialized once.
 static TensorRTState g_trt_state;
 
-void Network::feed(void *d_binary_input, void *d_global_input, void *d_mask_input, void *d_policy_output,
+void Network::feed(void *d_binary_input, void *d_global_input, void *d_policy_output,
                    void *d_value_output, int batch_size, cudaStream_t stream) {
 
   if (batch_size == 0) {
@@ -82,12 +81,10 @@ void Network::feed(void *d_binary_input, void *d_global_input, void *d_mask_inpu
                                      nvinfer1::Dims4(batch_size, IN_BIN_CHANNELS, TENSOR_SIZE, TENSOR_SIZE));
   g_trt_state.context->setInputShape(g_trt_state.input_global_name.c_str(),
                                      nvinfer1::Dims2(batch_size, IN_GLOBAL_CHANNELS));
-  g_trt_state.context->setInputShape(g_trt_state.input_mask_name.c_str(), nvinfer1::Dims2(batch_size, MASK_SIZE));
 
   // --- Set tensor addresses ---
   g_trt_state.context->setTensorAddress(g_trt_state.input_binary_name.c_str(), d_binary_input);
   g_trt_state.context->setTensorAddress(g_trt_state.input_global_name.c_str(), d_global_input);
-  g_trt_state.context->setTensorAddress(g_trt_state.input_mask_name.c_str(), d_mask_input);
   g_trt_state.context->setTensorAddress(g_trt_state.output_policy_name.c_str(), d_policy_output);
   g_trt_state.context->setTensorAddress(g_trt_state.output_value_name.c_str(), d_value_output);
 
@@ -99,16 +96,15 @@ Network::ResultPtr Network::evaluate(const Utils::Board &board, Utils::STONE_COL
   static auto &dispatcher = InferenceDispatcher::getInstance();
 
   // Prepare input from board state
-  auto [binary_input, global_input, mask_input] = prepareInput(board, player);
+  auto [binary_input, global_input] = prepareInput(board, player);
 
   // Submit to dispatcher
-  auto future = dispatcher.collect(binary_input, global_input, mask_input);
+  auto future = dispatcher.collect(binary_input, global_input);
   return future.get();
 }
 
 Network::InputUnit_T Network::prepareInput(const Matrix<Utils::STONE_COLOR, BOARD_SIZE, BOARD_SIZE> &board,
                                            Utils::STONE_COLOR player) {
-  static constexpr auto mask_vec_index = [](size_t r, size_t c) { return r * TENSOR_SIZE + c; };
   static constexpr auto get_input_template = []() {
     // bf
     /*
@@ -121,11 +117,10 @@ Network::InputUnit_T Network::prepareInput(const Matrix<Utils::STONE_COLOR, BOAR
     */
 
     InputUnit_T input{};
-    auto &[binary, global, mask] = input;
+    auto &[binary, global] = input;
     for (size_t r = 0; r < Config::BOARD_SIZE; ++r) {
       for (size_t c = 0; c < Config::BOARD_SIZE; ++c) {
         binary[0][r][c] = 1.0f;
-        mask[mask_vec_index(r, c)] = 1.0f;
       }
     }
 
@@ -148,23 +143,11 @@ Network::InputUnit_T Network::prepareInput(const Matrix<Utils::STONE_COLOR, BOAR
     global[4] = 1.0f; // 4 无禁/无禁六不胜0，有禁1
     global[6] = 1.0f; // 6 是否使用禁手特征（两种无禁恒为0)
 
-    // mask
-    // for points not in the top-left 15x15 board, set mask to 0
-    for (size_t r = 0; r < TENSOR_SIZE; ++r) {
-      for (size_t c = 0; c < TENSOR_SIZE; ++c) {
-        if (r < BOARD_SIZE && c < BOARD_SIZE) {
-          mask[mask_vec_index(r, c)] = 1.0f; // valid move
-        } else {
-          mask[mask_vec_index(r, c)] = 0.0f; // invalid move
-        }
-      }
-    }
     return input;
   };
   auto p_input = get_input_template();
-  auto &[binary, global, mask] = p_input;
-  global[5] = player == Utils::BLACK ? -1.0f : 1.0f;
-  mask[TENSOR_SIZE * TENSOR_SIZE] = 1.0f; // pass move is always valid
+  auto &[binary, global] = p_input;
+  // global[5] = player == Utils::BLACK ? -1.0f : 1.0f;
   CForbiddenPointFinder fpf(board);
   for (size_t r = 0; r < BOARD_SIZE; ++r) {
     for (size_t c = 0; c < BOARD_SIZE; ++c) {
@@ -178,7 +161,6 @@ Network::InputUnit_T Network::prepareInput(const Matrix<Utils::STONE_COLOR, BOAR
       if (fpf.isForbidden(r, c)) {
         if (player == Utils::BLACK) {
           binary[3][r][c] = 1.0f;            // 己方黑棋禁手
-          mask[mask_vec_index(r, c)] = 0.0f; // 禁手点不可下
         } else {
           binary[4][r][c] = 1.0f; // 对方黑棋禁手
         }

@@ -9,6 +9,7 @@
 #include <string>
 #include <thread>
 #include <atomic>
+#include <print>
 
 using namespace MCTS;
 using namespace GomokuRecord;
@@ -38,7 +39,8 @@ public:
           auto seconds = total_seconds % 60;
           
           // 在屏幕右上角显示累计计时器 (分钟:秒钟格式)
-          std::cout << "\r\x1B[1;60H" << "AI Total: " << std::setfill('0') << std::setw(2) << minutes << ":" << std::setw(2) << seconds << std::flush;
+          std::print("\r\x1B[1;60HAI Total: {:02}:{:02}", minutes, seconds);
+          std::cout << std::flush;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // 每秒更新一次
       }
@@ -63,7 +65,8 @@ public:
       timer_thread.join();
     }
     // 清除计时器显示
-    std::cout << "\r\x1B[1;60H" << std::string(20, ' ') << "\r" << std::flush;
+    std::print("\r\x1B[1;60H{}\r", std::string(20, ' '));
+    std::cout << std::flush;
   }
   
   // 获取总思考时间（秒）
@@ -130,40 +133,40 @@ public:
 
   // Display aligned board
   void print_board(const Utils::Board &board) {
-    std::cout << "\n";
-    std::cout << "   ";
+    std::print("\n");
+    std::print("   ");
     for (int i = 0; i < Config::BOARD_SIZE; i++) {
-      std::cout << std::setw(2) << (char)('A' + i) << " ";
+      std::print("{:2} ", static_cast<char>('A' + i));
     }
-    std::cout << "\n";
+    std::print("\n");
 
     for (int i = 0; i < Config::BOARD_SIZE; i++) {
-      std::cout << std::setw(2) << (i + 1) << " ";
+      std::print("{:2} ", i + 1);
       for (int j = 0; j < Config::BOARD_SIZE; j++) {
         char cell = '.';
         if (board[i][j] == Utils::BLACK)
           cell = 'X';
         else if (board[i][j] == Utils::WHITE)
           cell = 'O';
-        std::cout << " " << cell << " ";
+        std::print(" {} ", cell);
       }
-      std::cout << std::setw(2) << (i + 1) << "\n";
+      std::print("{:2}\n", i + 1);
     }
 
-    std::cout << "   ";
+    std::print("   ");
     for (int i = 0; i < Config::BOARD_SIZE; i++) {
-      std::cout << std::setw(2) << (char)('A' + i) << " ";
+      std::print("{:2} ", static_cast<char>('A' + i));
     }
-    std::cout << "\n\n";
+    std::print("\n\n");
   }
 
   // Main menu
   void show_main_menu() {
-    std::cout << "\n=== Gomoku Game ===\n";
-    std::cout << "1. Start Game\n";
-    std::cout << "2. Settings\n";
-    std::cout << "3. Exit\n";
-    std::cout << "Choose: ";
+    std::println("\n=== Gomoku Game ===");
+    std::println("1. Start Game");
+    std::println("2. Settings");
+    std::println("3. Exit");
+    std::print("Choose: ");
 
     int choice;
     std::cin >> choice;
@@ -176,48 +179,48 @@ public:
         current_state = SETTINGS;
         break;
       case 3:
-        std::cout << "Goodbye!\n";
+        std::println("Goodbye!");
         exit(0);
       default:
-        std::cout << "Invalid choice!\n";
+        std::println("Invalid choice!");
     }
   }
 
   // Settings menu
   void show_settings_menu() {
     while (true) {
-      std::cout << "\n=== Settings Menu ===\n";
-      std::cout << "Current settings:\n";
-      std::cout << "1. Thread count: " << settings.thread_count << "\n";
-      std::cout << "2. C_PUCT value: " << settings.c_puct << "\n";
-      std::cout << "3. Thinking time (ms): " << settings.think_time_ms << "\n";
-      std::cout << "4. Player name: " << settings.player_name << "\n";
-      std::cout << "5. AI name: " << settings.ai_name << "\n";
-      std::cout << "6. Return to main menu\n";
-      std::cout << "Choose a setting to modify: ";
+      std::println("\n=== Settings Menu ===");
+      std::println("Current settings:");
+      std::println("1. Thread count: {}", settings.thread_count);
+      std::println("2. C_PUCT value: {}", settings.c_puct);
+      std::println("3. Thinking time (ms): {}", settings.think_time_ms);
+      std::println("4. Player name: {}", settings.player_name);
+      std::println("5. AI name: {}", settings.ai_name);
+      std::println("6. Return to main menu");
+      std::print("Choose a setting to modify: ");
 
       int choice;
       std::cin >> choice;
 
       switch (choice) {
         case 1:
-          std::cout << "Enter new thread count: ";
+          std::print("Enter new thread count: ");
           std::cin >> settings.thread_count;
           break;
         case 2:
-          std::cout << "Enter new C_PUCT value: ";
+          std::print("Enter new C_PUCT value: ");
           std::cin >> settings.c_puct;
           break;
         case 3:
-          std::cout << "Enter new thinking time (ms): ";
+          std::print("Enter new thinking time (ms): ");
           std::cin >> settings.think_time_ms;
           break;
         case 4:
-          std::cout << "Enter player name: ";
+          std::print("Enter player name: ");
           std::cin >> settings.player_name;
           break;
         case 5:
-          std::cout << "Enter AI name: ";
+          std::print("Enter AI name: ");
           std::cin >> settings.ai_name;
           break;
         case 6:
@@ -225,7 +228,7 @@ public:
           current_state = MAIN_MENU;
           return;
         default:
-          std::cout << "Invalid choice!\n";
+          std::println("Invalid choice!");
       }
     }
   }
@@ -274,10 +277,10 @@ public:
         board[5][9] = Utils::BLACK;   // J6
         break;
       case 4: // 自定义开局
-        std::cout << "\n=== Custom Opening Setup ===\n";
-        std::cout << "First move is fixed at H8 (Black)\n";
-        std::cout << "Please input 2 additional coordinates (e.g., I9 J10):\n";
-        std::cout << "Format: Letter + Number (e.g., I9, J10)\n";
+        std::println("\n=== Custom Opening Setup ===");
+        std::println("First move is fixed at H8 (Black)");
+        std::println("Please input 2 additional coordinates (e.g., I9 J10):");
+        std::println("Format: Letter + Number (e.g., I9, J10)");
         
         // Store the 3 coordinates (first is fixed at H8)
         int coordinates[3][2];
@@ -289,7 +292,7 @@ public:
           bool valid_input = false;
           while (!valid_input) {
             std::string input;
-            std::cout << "Enter coordinate " << (i + 1) << ": ";
+            std::print("Enter coordinate {}: ", i + 1);
             std::cin >> input;
             
             if (input.length() >= 2) {
@@ -304,10 +307,10 @@ public:
                 coordinates[i][1] = x;
                 valid_input = true;
               } else {
-                std::cout << "Invalid coordinate! Please enter a valid coordinate (e.g., A1-O15).\n";
+                std::println("Invalid coordinate! Please enter a valid coordinate (e.g., A1-O15).");
               }
             } else {
-              std::cout << "Invalid input format! Please use format: Letter + Number (e.g., I9).\n";
+              std::println("Invalid input format! Please use format: Letter + Number (e.g., I9).");
             }
           }
         }
@@ -317,18 +320,18 @@ public:
         board[coordinates[1][0]][coordinates[1][1]] = Utils::WHITE;  // Second move (White)
         board[coordinates[2][0]][coordinates[2][1]] = Utils::BLACK;  // Third move (Black)
         
-        std::cout << "Custom opening applied! (H8 + your 2 coordinates)\n";
+        std::println("Custom opening applied! (H8 + your 2 coordinates)");
         break;
     }
   }
 
   // Game setup
   void show_game_setup() {
-    std::cout << "\n=== Game Setup ===\n";
-    std::cout << "Choose first turn:\n";
-    std::cout << "1. Player first\n";
-    std::cout << "2. AI first\n";
-    std::cout << "Choose: ";
+    std::println("\n=== Game Setup ===");
+    std::println("Choose first turn:");
+    std::println("1. Player first");
+    std::println("2. AI first");
+    std::print("Choose: ");
 
     int choice;
     std::cin >> choice;
@@ -345,13 +348,13 @@ public:
 
     // If AI goes first, show fixed opening menu
     if (!game.my_turn_first) {
-      std::cout << "\n=== Fixed Opening Selection ===\n";
-      std::cout << "Choose a fixed opening:\n";
-      std::cout << "1. 疏星局 (best opening) (B:H8,W:H9;B:J10)\n";
-      std::cout << "2. 长星局 (B:H8;W:I9;B:J10)\n";
-      std::cout << "3. 流星局 (B:H8;W:I9;B:J6)\n";
-      std::cout << "4. 自定义开局(input 2 coordinates)\n";
-      std::cout << "Choose: ";
+      std::println("\n=== Fixed Opening Selection ===");
+      std::println("Choose a fixed opening:");
+      std::println("1. 疏星局 (best opening) (B:H8,W:H9;B:J10)");
+      std::println("2. 长星局 (B:H8;W:I9;B:J10)");
+      std::println("3. 流星局 (B:H8;W:I9;B:J6)");
+      std::println("4. 自定义开局(input 2 coordinates)");
+      std::print("Choose: ");
       
       int opening_choice;
       std::cin >> opening_choice;
@@ -359,17 +362,17 @@ public:
       if (opening_choice >= 1 && opening_choice <= 4) {
         apply_fixed_opening(board, opening_choice);
         if (opening_choice != 4) {
-          std::cout << "Fixed opening applied!\n";
+          std::println("Fixed opening applied!");
         }
       }
     }
     else{
-      std::cout << "You go first, please input 2 coordinates\n";
+      std::println("You go first, please input 2 coordinates");
       apply_fixed_opening(board, 4);
     }
 
     // 1. 打印当前开局棋盘
-    std::cout << "\n=== Current Opening Board ===\n";
+    std::println("\n=== Current Opening Board ===");
     print_board(board);
 
     // 2. 换手逻辑
@@ -377,24 +380,24 @@ public:
     if (!game.my_turn_first) {
       // AI先手，使用AI换手判断函数
       should_swap = ai_should_swap(board);
-      std::cout << "AI decides to " << (should_swap ? "swap" : "not swap") << " colors.\n";
+      std::println("AI decides to {} colors.", (should_swap ? "swap" : "not swap"));
     } else {
       // 玩家先手，询问玩家是否换手
-      std::cout << "Do you want to swap colors? (y/n): ";
+      std::print("Do you want to swap colors? (y/n): ");
       std::string swap_input;
       std::cin >> swap_input;
       should_swap = (swap_input == "y" || swap_input == "Y");
-      std::cout << "You decided to " << (should_swap ? "swap" : "not swap") << " colors.\n";
+      std::println("You decided to {} colors.", (should_swap ? "swap" : "not swap"));
     }
 
     // 3. 如果要换手，交换双方的颜色
     if (should_swap) {
       game.my_turn_first = !game.my_turn_first;
-      std::cout << "Colors swapped! ";
+      std::print("Colors swapped! ");
       if (game.my_turn_first) {
-        std::cout << "You will play as Black.\n";
+        std::println("You will play as Black.");
       } else {
-        std::cout << "AI will play as Black.\n";
+        std::println("AI will play as Black.");
       }
     }
     //当前应该先手是白棋
@@ -414,12 +417,12 @@ public:
     Utils::STONE_COLOR current_player = Utils::WHITE;
     int move_count = 4;
 
-    std::cout << "\n=== Game Start ===\n";
-    std::cout << "Instructions:\n";
-    std::cout << "- Place stone: Enter coordinates (e.g., H8)\n";
-    std::cout << "- Pass: Enter 'pass'\n";
-    std::cout << "- Undo: Enter 'undo'\n";
-    std::cout << "- Quit: Enter 'quit'\n\n";
+    std::println("\n=== Game Start ===");
+    std::println("Instructions:");
+    std::println("- Place stone: Enter coordinates (e.g., H8)");
+    std::println("- Pass: Enter 'pass'");
+    std::println("- Undo: Enter 'undo'");
+    std::println("- Quit: Enter 'quit'\n");
 
     print_board(game.agent->last_move_board());
 
@@ -430,34 +433,34 @@ public:
 
       if (is_my_turn) {
         // Player's turn
-        std::cout << "Your turn (" << (current_player == Utils::BLACK ? "Black" : "White") << "): ";
+        std::print("Your turn ({}): ", (current_player == Utils::BLACK ? "Black" : "White"));
         std::string input;
         std::cin >> input;
 
         if (input == "quit") {
-          std::cout << "Game over\n";
+          std::println("Game over");
           break;
         }
 
         if (input == "undo") {
           if (game.record.undoLastMove()) {
-            std::cout << "Undo successful\n";
+            std::println("Undo successful");
             // Reinitialize agent state, simplified handling
             continue;
           } else {
-            std::cout << "Cannot undo\n";
+            std::println("Cannot undo");
             continue;
           }
         }
 
         if (input == "pass") {
-          std::cout << "You chose to pass\n";
+          std::println("You chose to pass");
           game.agent->apply_move(-1);
           game.consecutive_passes++;
           game.record.addMove(current_player == Utils::BLACK ? Utils::BLACK : Utils::WHITE, -1);
 
           if (game.consecutive_passes >= 2) {
-            std::cout << "Two consecutive passes, game is a draw!\n";
+            std::println("Two consecutive passes, game is a draw!");
             game.game_ended = true;
             game.record.setResult(0); // Draw
             break;
@@ -477,23 +480,23 @@ public:
                 game.agent->apply_move(move_idx);
                 game.record.addMove(current_player == Utils::BLACK ? Utils::BLACK : Utils::WHITE, move_idx);
                 game.consecutive_passes = 0;
-                std::cout << "You placed stone: " << input << "\n";
+                std::println("You placed stone: {}", input);
               } else {
-                std::cout << "Position already occupied!\n";
+                std::println("Position already occupied!");
                 continue;
               }
             } else {
-              std::cout << "Invalid coordinates!\n";
+              std::println("Invalid coordinates!");
               continue;
             }
           } else {
-            std::cout << "Invalid input!\n";
+            std::println("Invalid input!");
             continue;
           }
         }
       } else {
         // AI's turn
-        std::cout << "AI is thinking...\n";
+        std::println("AI is thinking...");
         
         // 启动思考计时器
         thinking_timer.startThinking();
@@ -513,23 +516,23 @@ public:
         //五手N打
         if(move_idx == 5){
           // 第五手特殊处理：AI显示N个落子位置供玩家选择
-          std::cout << "\n=== Fifth Move Selection ===\n";
+          std::println("\n=== Fifth Move Selection ===");
           
           // 让玩家输入位置数量
           int num_positions;
           bool valid_input = false;
           while (!valid_input) {
-            std::cout << "How many positions do you want? (2-5): ";
+            std::print("How many positions do you want? (2-5): ");
             std::cin >> num_positions;
             
             if (num_positions >= 2 && num_positions <= 5) {
               valid_input = true;
             } else {
-              std::cout << "Invalid number! Please enter a number between 2 and 5.\n";
+              std::println("Invalid number! Please enter a number between 2 and 5.");
             }
           }
           
-          std::cout << "AI suggests " << num_positions << " possible moves:\n";
+          std::println("AI suggests {} possible moves:", num_positions);
           
           std::vector<int> n_moves = ai_get_n_moves(game.agent->last_move_board(), num_positions);
           
@@ -538,30 +541,30 @@ public:
             int r = n_moves[i] / Config::BOARD_SIZE;
             int c = n_moves[i] % Config::BOARD_SIZE;
             char col = 'A' + c;
-            std::cout << (i + 1) << ". " << col << (r + 1) << "\t";
+            std::print("{}. {}{}\t", i + 1, col, r + 1);
           }
-          std::cout << std::endl;
+          std::print("\n");
           // 让玩家选择
-          std::cout << "Please choose a move (1-" << num_positions << "): ";
+          std::print("Please choose a move (1-{}): ", num_positions);
           int choice;
           std::cin >> choice;
           
           if (choice >= 1 && choice <= num_positions) {
             move_idx = n_moves[choice - 1];
-            std::cout << "You chose move " << choice << ".\n";
+            std::println("You chose move {}.", choice);
           } else {
-            std::cout << "Invalid choice! Using first move.\n";
+            std::println("Invalid choice! Using first move.");
             move_idx = n_moves[0];
           }
         }
         if (move_idx == -1) {
-          std::cout << "AI chose to pass\n";
+          std::println("AI chose to pass");
           game.agent->apply_move(-1);
           game.consecutive_passes++;
           game.record.addMove(current_player == Utils::BLACK ? Utils::BLACK : Utils::WHITE, -1);
 
           if (game.consecutive_passes >= 2) {
-            std::cout << "Two consecutive passes, game is a draw!\n";
+            std::println("Two consecutive passes, game is a draw!");
             game.game_ended = true;
             game.record.setResult(0); // Draw
             break;
@@ -571,8 +574,8 @@ public:
           int r = move_idx / Config::BOARD_SIZE;
           int c = move_idx % Config::BOARD_SIZE;
           char col = 'A' + c;
-          std::cout << "AI placed stone: " << col << (r + 1) << " | Time: " << duration.count() << "ms | Simulations: " << sim_count
-                    << "\n";
+          std::println("AI placed stone: {}{} | Time: {}ms | Simulations: {}",
+                    col, r + 1, duration.count(), sim_count);
           game.record.addMove(current_player == Utils::BLACK ? Utils::BLACK : Utils::WHITE, move_idx);
           game.consecutive_passes = 0;
         }
@@ -583,7 +586,7 @@ public:
       // Check win
       if (check_win(game.agent->last_move_board(), current_player)) {
         std::string winner = (current_player == Utils::BLACK ? "Black" : "White");
-        std::cout << winner << " wins!\n";
+        std::println("{} wins!", winner);
         game.game_ended = true;
 
         // Set game record result
@@ -600,7 +603,7 @@ public:
     }
 
     if (!game.game_ended) {
-      std::cout << "Game is a draw!\n";
+      std::println("Game is a draw!");
       game.record.setResult(0);
     }
 
@@ -610,13 +613,13 @@ public:
     int total_seconds = static_cast<int>(total_time);
     int minutes = total_seconds / 60;
     int seconds = total_seconds % 60;
-    std::cout << "\n=== Game Summary ===\n";
-    std::cout << "Total AI thinking time: " << std::setfill('0') << std::setw(2) << minutes << ":" << std::setw(2) << seconds << " (MM:SS)\n";
+    std::println("\n=== Game Summary ===");
+    std::println("Total AI thinking time: {:02}:{:02} (MM:SS)", minutes, seconds);
 
     // Save game record
     save_game_record();
 
-    std::cout << "\nPress any key to return to main menu...\n";
+    std::println("\nPress any key to return to main menu...");
     std::cin.ignore();
     std::cin.get();
     current_state = MAIN_MENU;
@@ -675,9 +678,9 @@ public:
     std::string filename = "C5-" + settings.player_name + " vs " + settings.ai_name + "-" + result_str + ".txt";
     game.record.saveToFile(filename);
 
-    std::cout << "\n=== Game Record ===\n";
-    std::cout << game.record.toString() << "\n";
-    std::cout << "\nGame record saved to: " << filename << "\n";
+    std::println("\n=== Game Record ===");
+    std::println("{}", game.record.toString());
+    std::println("\nGame record saved to: {}", filename);
   }
 
   // Main loop

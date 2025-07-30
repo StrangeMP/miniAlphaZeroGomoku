@@ -13,10 +13,9 @@ namespace MCTS {
 struct Network {
   using WEIGHT_T = float;
   static constexpr size_t BOARD_SIZE = 15;
-  static constexpr size_t TENSOR_SIZE = 19;
+  static constexpr size_t TENSOR_SIZE = 15;
   static constexpr size_t IN_BIN_CHANNELS = 22;
   static constexpr size_t IN_GLOBAL_CHANNELS = 39;
-  static constexpr size_t MASK_SIZE = TENSOR_SIZE * TENSOR_SIZE + 1;
   static constexpr size_t PASS_IDX = BOARD_SIZE * BOARD_SIZE; // 225
   /*
 --- TensorRT Inference Results ---
@@ -34,14 +33,13 @@ Value Logits:
   //
   using BinaryInputUnit_T = Tensor<WEIGHT_T, IN_BIN_CHANNELS, TENSOR_SIZE, TENSOR_SIZE>;
   using GlobalInputUnit_T = Vec<WEIGHT_T, IN_GLOBAL_CHANNELS>;
-  using MaskInputUnit_T = Vec<WEIGHT_T, MASK_SIZE>;
-  using InputUnit_T = std::tuple<BinaryInputUnit_T, GlobalInputUnit_T, MaskInputUnit_T>;
+  using InputUnit_T = std::pair<BinaryInputUnit_T, GlobalInputUnit_T>;
   using PolicyOut_T = Vec<float, BOARD_SIZE * BOARD_SIZE + 1>;
   using ValueOut_T = float;
   using ResultType = std::pair<PolicyOut_T, ValueOut_T>;
   using ResultPtr = std::unique_ptr<ResultType>;
 
-  static void feed(void *d_binary_input, void *d_global_input, void *d_mask_input, void *d_policy_output,
+  static void feed(void *d_binary_input, void *d_global_input, void *d_policy_output,
                    void *d_value_output, int batch_size, cudaStream_t stream);
   static ResultPtr evaluate(const Utils::Board &board, Utils::STONE_COLOR player);
 

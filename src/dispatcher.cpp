@@ -17,7 +17,6 @@ InferenceDispatcher::InferenceDispatcher() {
     // Allocate Pinned Host Memory
     cudaMallocHost(&batch->binary_inputs, Config::MAX_BATCH_SIZE * sizeof(Network::BinaryInputUnit_T));
     cudaMallocHost(&batch->global_inputs, Config::MAX_BATCH_SIZE * sizeof(Network::GlobalInputUnit_T));
-    cudaMallocHost(&batch->mask_inputs, Config::MAX_BATCH_SIZE * sizeof(Network::MaskInputUnit_T));
     cudaMallocHost(&batch->policy_outputs, Config::MAX_BATCH_SIZE * sizeof(Network::PolicyOut_T));
     cudaMallocHost(&batch->value_outputs, Config::MAX_BATCH_SIZE * sizeof(Network::ValueOut_T));
     batch->promises.resize(Config::MAX_BATCH_SIZE);
@@ -27,7 +26,6 @@ InferenceDispatcher::InferenceDispatcher() {
     cudaEventCreate(&batch->event);
     cudaMalloc(&batch->d_binary_input, Config::MAX_BATCH_SIZE * sizeof(Network::BinaryInputUnit_T));
     cudaMalloc(&batch->d_global_input, Config::MAX_BATCH_SIZE * sizeof(Network::GlobalInputUnit_T));
-    cudaMalloc(&batch->d_mask_input, Config::MAX_BATCH_SIZE * sizeof(Network::MaskInputUnit_T));
     cudaMalloc(&batch->d_policy_output, Config::MAX_BATCH_SIZE * sizeof(Network::PolicyOut_T));
     cudaMalloc(&batch->d_value_output, Config::MAX_BATCH_SIZE * sizeof(Network::ValueOut_T));
 
@@ -47,12 +45,10 @@ InferenceDispatcher::~InferenceDispatcher() {
   for (auto &batch : batch_pool_) {
     cudaFree(batch->d_binary_input);
     cudaFree(batch->d_global_input);
-    cudaFree(batch->d_mask_input);
     cudaFree(batch->d_policy_output);
     cudaFree(batch->d_value_output);
     cudaFreeHost(batch->binary_inputs);
     cudaFreeHost(batch->global_inputs);
-    cudaFreeHost(batch->mask_inputs);
     cudaFreeHost(batch->policy_outputs);
     cudaFreeHost(batch->value_outputs);
     cudaEventDestroy(batch->event);
@@ -93,8 +89,7 @@ void InferenceDispatcher::stop() {
 }
 
 std::future<Network::ResultPtr> InferenceDispatcher::collect(const Network::BinaryInputUnit_T &binary_input,
-                                                             const Network::GlobalInputUnit_T &global_input,
-                                                             const Network::MaskInputUnit_T &mask_input) {
+                                                             const Network::GlobalInputUnit_T &global_input) {
   if (!running_.load() || shutting_down_.load()) {
     throw std::runtime_error("Dispatcher is not running or shutting down.");
   }
@@ -122,7 +117,6 @@ std::future<Network::ResultPtr> InferenceDispatcher::collect(const Network::Bina
     slot = current_batch->item_count++;
     current_batch->binary_inputs[slot] = binary_input;
     current_batch->global_inputs[slot] = global_input;
-    current_batch->mask_inputs[slot] = mask_input;
     current_batch->promises[slot] = std::promise<Network::ResultPtr>();
 
     // If this request filled the batch, swap it out for a new one
@@ -193,7 +187,6 @@ void InferenceDispatcher::submitterLoop() {
 
       const size_t binary_size = batch_size * sizeof(Network::BinaryInputUnit_T);
       const size_t global_size = batch_size * sizeof(Network::GlobalInputUnit_T);
-      const size_t mask_size = batch_size * sizeof(Network::MaskInputUnit_T);
       const size_t policy_size = batch_size * sizeof(Network::PolicyOut_T);
       const size_t value_size = batch_size * sizeof(Network::ValueOut_T);
 
@@ -201,10 +194,8 @@ void InferenceDispatcher::submitterLoop() {
                       cudaMemcpyHostToDevice, batch_to_process->stream);
       cudaMemcpyAsync(batch_to_process->d_global_input, batch_to_process->global_inputs, global_size,
                       cudaMemcpyHostToDevice, batch_to_process->stream);
-      cudaMemcpyAsync(batch_to_process->d_mask_input, batch_to_process->mask_inputs, mask_size, cudaMemcpyHostToDevice,
-                      batch_to_process->stream);
 
-      Network::feed(batch_to_process->d_binary_input, batch_to_process->d_global_input, batch_to_process->d_mask_input,
+      Network::feed(batch_to_process->d_binary_input, batch_to_process->d_global_input,
                     batch_to_process->d_policy_output, batch_to_process->d_value_output, batch_size,
                     batch_to_process->stream);
 
@@ -224,7 +215,7 @@ void InferenceDispatcher::reaperLoop() {
   Batch *completed_batch;
   while (running_.load() || in_flight_batches_.size_approx() > 0) {
     // Wait for a batch to finish processing
-    if (in_flight_batches_.wait_dequeue_timed(completed_batch, std::chrono::milliseconds(10))) {
+    if (in_flight_batches_.wait_dequeue_timed(completed_batch, Config::BATCH_TIMEOUT_MS)) {
       cudaEventSynchronize(completed_batch->event);
 
       // This batch is done. Set inference results on nodes.
