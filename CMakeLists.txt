@@ -13,7 +13,7 @@ set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
 # Set a default build type if none is specified
 if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE Release)
+  set(CMAKE_BUILD_TYPE Debug)
 endif()
 
 # Add compiler flags

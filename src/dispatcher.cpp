@@ -2,8 +2,8 @@
 #include "config.hpp"
 #include "multithread_mcts.hpp"
 #include "network.hpp"
+#include "AsyncLogger.hpp"
 #include <chrono>
-#include <print>
 #include <stdexcept>
 
 InferenceDispatcher &InferenceDispatcher::getInstance() {
@@ -107,6 +107,7 @@ void InferenceDispatcher::collect(const Network::BinaryInputUnit_T &binary_input
 
   Batch *current_batch;
   int slot;
+  AsyncLogger::getInstance().log("Collecting inference request for node {}", node->debug_id);
 
   {
     // Lock to protect the check-then-act sequence for getting a slot
@@ -130,6 +131,8 @@ void InferenceDispatcher::collect(const Network::BinaryInputUnit_T &binary_input
     current_batch->global_inputs[slot] = global_input;
     current_batch->mask_inputs[slot] = mask_input;
     current_batch->node_pointers[slot] = node;
+
+    AsyncLogger::getInstance().log("Collected request for node {} into slot {}", node->debug_id, slot);
 
     // If this request filled the batch, swap it out for a new one
     if (slot + 1 >= Config::MAX_BATCH_SIZE) {
@@ -220,6 +223,8 @@ void InferenceDispatcher::submitterLoop() {
 
       // Move the batch to the in-flight queue
       in_flight_batches_.enqueue(batch_to_process);
+
+      AsyncLogger::getInstance().log("Submitted batch of size {} for processing", batch_size);
     }
   }
 }
@@ -229,11 +234,7 @@ void InferenceDispatcher::reaperLoop() {
   while (running_.load() || in_flight_batches_.size_approx() > 0) {
     // Wait for a batch to finish processing
     if (in_flight_batches_.wait_dequeue_timed(completed_batch, std::chrono::milliseconds(10))) {
-      // try {
-      // Block until this specific batch's event is complete
-      std::println("Waiting for batch to complete...");
       cudaEventSynchronize(completed_batch->event);
-      std::println("Batch completed. Setting results on nodes...");
 
       // This batch is done. Set inference results on nodes.
       for (int i = 0; i < completed_batch->item_count; ++i) {
@@ -244,6 +245,8 @@ void InferenceDispatcher::reaperLoop() {
 
           // Set the inference result on the node
           node->setInferenceResult(policy, value_vec);
+
+          AsyncLogger::getInstance().log("Set results for node {}", node->debug_id);
         }
       }
 
