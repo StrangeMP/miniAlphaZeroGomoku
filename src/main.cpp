@@ -1,7 +1,7 @@
+#include "ForbiddenPointFinder.h"
 #include "config.hpp"
 #include "gomoku_record.hpp"
 #include "heuristic.hpp"
-#include "mcts.hpp"
 #include "network.hpp"
 #include "utils.hpp"
 #include <atomic>
@@ -13,10 +13,135 @@
 #include <queue>
 #include <string>
 #include <thread>
+#include <vector>
 #include <windows.h>
 
-using namespace MCTS;
 using namespace GomokuRecord;
+
+// Simple Network Agent to replace MCTS
+class NetworkAgent {
+private:
+  Utils::Board current_board;
+  Utils::STONE_COLOR current_player;
+  std::vector<int> move_history;
+
+public:
+  NetworkAgent(const Utils::Board &initial_board, Utils::STONE_COLOR player_color)
+      : current_board(initial_board), current_player(player_color) {}
+
+  const Utils::Board &last_move_board() const { return current_board; }
+
+  void apply_move(int move_idx) {
+    if (move_idx == Network::PASS_IDX) {
+      // Pass move - just switch players
+      current_player = (current_player == Utils::BLACK ? Utils::WHITE : Utils::BLACK);
+    } else {
+      // Regular move
+      auto [r, c] = Utils::index_to_coordinate(move_idx);
+      current_board[r][c] = current_player;
+      current_player = (current_player == Utils::BLACK ? Utils::WHITE : Utils::BLACK);
+    }
+    move_history.push_back(move_idx);
+  }
+
+  void undo_last_move() {
+    if (move_history.empty()) return;
+    
+    int last_move = move_history.back();
+    move_history.pop_back();
+    
+    if (last_move != Network::PASS_IDX) {
+      auto [r, c] = Utils::index_to_coordinate(last_move);
+      current_board[r][c] = Utils::EMPTY;
+    }
+    
+    current_player = (current_player == Utils::BLACK ? Utils::WHITE : Utils::BLACK);
+  }
+
+  int next_move_idx() {
+    // Get network evaluation
+    auto result = Network::evaluate(current_board, current_player);
+    auto &[policy, value] = *result;
+    
+    // Find best legal move
+    float best_value = -std::numeric_limits<float>::infinity();
+    int best_move = Network::PASS_IDX; // Default to pass
+    
+    // Check regular moves
+    for (int i = 0; i < Config::BOARD_SQUARES; ++i) {
+      auto [r, c] = Utils::index_to_coordinate(i);
+      if (current_board[r][c] == Utils::EMPTY) {
+        // Check if move is legal for black (forbidden points)
+        if (current_player == Utils::BLACK) {
+          CForbiddenPointFinder fpf(current_board);
+          if (fpf.isForbidden(r, c)) {
+            continue;
+          }
+        }
+        
+        if (policy[i] > best_value) {
+          best_value = policy[i];
+          best_move = i;
+        }
+      }
+    }
+    
+    // Check pass move
+    if (policy[Network::PASS_IDX] > best_value) {
+      best_move = Network::PASS_IDX;
+    }
+    
+    return best_move;
+  }
+
+  float get_win_rate() {
+    auto result = Network::evaluate(current_board, current_player);
+    return result->second;
+  }
+
+  Utils::STONE_COLOR get_current_player() const { return current_player; }
+};
+
+std::vector<int> get_top_n_policy_moves(const Utils::Board &board, Utils::STONE_COLOR color, int n) {
+    // Run network inference to get policy
+    auto policy_result = Network::evaluate(board, color);
+
+    // Copy policy to a vector of pairs (index, value)
+    std::vector<std::pair<int, float>> indexed_policy;
+    indexed_policy.reserve(Config::BOARD_SQUARES);
+    for (int i = 0; i < Config::BOARD_SQUARES; ++i) {
+        indexed_policy.emplace_back(i, policy_result->first[i]);
+    }
+
+    // If color is black, set forbidden moves' policy to -inf so they are ignored
+    if (color == Utils::STONE_COLOR::BLACK) {
+        CForbiddenPointFinder fpf(board);
+        for (int i = 0; i < Config::BOARD_SQUARES; ++i) {
+            auto [x, y] = Utils::index_to_coordinate(i);
+            if (fpf.isForbidden(x, y)) {
+                indexed_policy[i].second = -std::numeric_limits<float>::infinity();
+            }
+        }
+    }
+
+    // Partial sort to get top n
+    if (n > static_cast<int>(indexed_policy.size())) n = static_cast<int>(indexed_policy.size());
+    std::partial_sort(
+        indexed_policy.begin(),
+        indexed_policy.begin() + n,
+        indexed_policy.end(),
+        [](const auto &a, const auto &b) { return a.second > b.second; }
+    );
+
+    // Collect indices of top n
+    std::vector<int> result;
+    result.reserve(n);
+    for (int i = 0; i < n; ++i) {
+        result.push_back(indexed_policy[i].first);
+    }
+    return result;
+}
+
 
 // Timer class for cumulative AI thinking display
 class ThinkingTimer {
@@ -221,8 +346,7 @@ private:
     bool game_ended;
     GomokuGameRecord record;
     int consecutive_passes;
-    std::unique_ptr<MCTSAgent> agent;
-    Network net;
+    std::unique_ptr<NetworkAgent> agent;
   } game;
 
 public:
@@ -344,84 +468,22 @@ public:
 
   // AI第五手N个落子位置
   std::vector<int> ai_get_n_moves(const Utils::Board &board, int n) {
-    auto root = &game.agent->root_node();
-    assert(root->current_color == Utils::BLACK);
-    auto cmp = [root](int idx1, int idx2) {
-      return root->children[idx1]->visit_count.load() < root->children[idx2]->visit_count.load();
-    };
-    std::priority_queue<int, std::vector<int>, decltype(cmp)> pq(cmp);
-    for (int i = 0; i < Config::BOARD_SQUARES; ++i) {
-      if (root->children[i]) {
-        pq.push(i);
-      }
-    }
-    std::vector<int> top_moves;
-    for (int i = 0; i < n && !pq.empty(); ++i) {
-      top_moves.push_back(pq.top());
-      pq.pop();
-    }
-    // The following logic handles the very rare case that the top n moves are not enough
-    if (top_moves.size() < n) {
-      // Pick rest moves from legal moves in the central 5x5 area
-      // Find legal moves in the central 5x5 area
-      int center = Config::BOARD_SIZE / 2;
-      int half = 2; // 5x5 area: center-2 to center+2
-      const auto &legal_moves = root->legal_moves;
-      for (int dr = -half; dr <= half; ++dr) {
-        for (int dc = -half; dc <= half; ++dc) {
-          int r = center + dr;
-          int c = center + dc;
-          if (r >= 0 && r < Config::BOARD_SIZE && c >= 0 && c < Config::BOARD_SIZE) {
-            int idx = r * Config::BOARD_SIZE + c;
-            if (legal_moves[idx]) {
-              // Avoid duplicates
-              if (std::find(top_moves.begin(), top_moves.end(), idx) == top_moves.end()) {
-                top_moves.push_back(idx);
-                if (top_moves.size() == n)
-                  break;
-              }
-            }
-          }
-        }
-        if (top_moves.size() == n)
-          break;
-      }
-      // If still not enough, fill from any remaining legal moves
-      if (top_moves.size() < n) {
-        for (int i = 0; i < Config::BOARD_SQUARES; ++i) {
-          if (legal_moves[i]) {
-            if (std::find(top_moves.begin(), top_moves.end(), i) == top_moves.end()) {
-              top_moves.push_back(i);
-              if (top_moves.size() == n)
-                break;
-            }
-          }
-        }
-      }
-    }
-    return top_moves;
+    return get_top_n_policy_moves(board, Utils::BLACK, n);
   }
 
   // AI选择玩家提供的N个位置中的哪一个
   int ai_choose_from_player_moves(const Utils::Board &board, const std::vector<int> &player_moves) {
-    auto root = &game.agent->root_node();
-    assert(root->current_color == Utils::BLACK);
-    auto cmp = [root](int idx1, int idx2) -> bool {
-      // priority queue maintains the second operand near heap top when the cmp returns true
-      if (!root->children[idx2]) { // if the second operand is not a child, it is a bad move for black, but a good move
-                                   // for white
-        return true;
-      } else if (!root->children[idx1]) {
-        return false;
-      } else {
-        return root->children[idx1]->visit_count.load() > root->children[idx2]->visit_count.load();
+    auto result = Network::evaluate(board, Utils::BLACK);
+    auto &[pi, _] = *result;
+    int best_move = player_moves[0];
+    float best_value = pi[best_move];
+    for (int move : player_moves) {
+      if (pi[move] < best_value) {
+        best_value = pi[move];
+        best_move = move;
       }
-    };
-    std::priority_queue<int, std::vector<int>, decltype(cmp)> pq(cmp);
-    for (int i = 0; i < player_moves.size(); ++i) {
-      pq.push(player_moves[i]);
     }
-    return pq.top();
+    return best_move;
   }
 
   // 坐标转换和验证函数
@@ -589,13 +651,13 @@ public:
     }
   }
 
-  std::optional<int> get_win_point(Node *node) {
-    auto threats = find_all_threats(node->board_state, node->current_color);
-    const auto &legal_moves = node->legal_moves;
+  std::optional<int> get_win_point(const Utils::Board &board, Utils::STONE_COLOR color) {
+    auto threats = find_all_threats(board, color);
     for (auto [coord, threat_type] : threats) {
       if (threat_type == 2) {
         auto idx = Utils::coordinate_to_index(coord);
-        if (legal_moves[idx]) {
+        auto [r, c] = Utils::index_to_coordinate(idx);
+        if (board[r][c] == Utils::EMPTY) {
           return idx;
         }
       }
@@ -679,7 +741,7 @@ public:
       }
     }
     // 当前应该先手是白棋
-    game.agent = std::make_unique<MCTSAgent>(board, Utils::WHITE, settings.thread_count);
+    game.agent = std::make_unique<NetworkAgent>(board, Utils::WHITE);
 
     // Initialize game record
     game.record = GomokuGameRecord(settings.player_name, settings.ai_name);
@@ -784,17 +846,18 @@ public:
         } else {
           // Parse coordinates
           auto coord_result = parse_coordinate(input);
-          if (const auto &root_node = game.agent->root_node(); root_node.current_color == Utils::BLACK) {
-            if (!root_node.legal_moves[coord_result.index]) {
-              std::println("Illegal move!");
-              game.game_ended = true;
-              // Set game record result
-              if (game.my_turn_first) {
-                game.record.setResult(current_player == Utils::BLACK ? 1 : 2);
-              } else {
-                game.record.setResult(current_player == Utils::WHITE ? 1 : 2);
-              }
-              break;
+          if (!coord_result.valid) {
+            std::println("{}", coord_result.error_message);
+            continue;
+          }
+          
+          // Check if move is legal for black (forbidden points)
+          if (current_player == Utils::BLACK) {
+            CForbiddenPointFinder fpf(game.agent->last_move_board());
+            auto [r, c] = Utils::index_to_coordinate(coord_result.index);
+            if (fpf.isForbidden(r, c)) {
+              std::println("Illegal move! This position is forbidden for Black.");
+              continue;
             }
           }
           if (!coord_result.valid) {
@@ -819,23 +882,21 @@ public:
         thinking_timer.startThinking();
 
         auto start = std::chrono::high_resolution_clock::now();
-        // Calculate simulations based on thinking time (rough estimate)
-        int target_simulations = 1600;
-        game.agent->run_mcts(target_simulations);
-        int sim_count = game.agent->get_simulations_completed();
+        
+        // Get AI move using network inference
+        move_idx = game.agent->next_move_idx();
+        auto win_point = get_win_point(game.agent->last_move_board(), current_player);
+        if (win_point) {
+          move_idx = *win_point;
+        }
+
         auto end = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
         // 停止思考计时器
         thinking_timer.stopThinking();
 
-        move_idx = game.agent->next_move_idx();
-        auto win_point = get_win_point(&game.agent->root_node());
-        if (win_point) {
-          move_idx = *win_point;
-        }
-
-        win_rate = game.agent->root_node().value();
+        win_rate = game.agent->get_win_rate();
         // 五手N打
         if (move_count == 5) {
           // 第五手特殊处理：AI显示N个落子位置供玩家选择
@@ -877,7 +938,7 @@ public:
           int r = move_idx / Config::BOARD_SIZE;
           int c = move_idx % Config::BOARD_SIZE;
           char col = 'A' + c;
-          std::println("AI placed stone: {}{} | Time: {}ms | Simulations: {}", col, r + 1, duration.count(), sim_count);
+          std::println("AI placed stone: {}{} | Time: {}ms", col, r + 1, duration.count());
           game.record.addMove(current_player == Utils::BLACK ? Utils::BLACK : Utils::WHITE, move_idx);
           game.consecutive_passes = 0;
         }
@@ -886,7 +947,6 @@ public:
       print_board(game.agent->last_move_board());
       std::println("AI placed at {}", index_to_coordinate(move_idx));
       std::println("AI Win Rate: {}", win_rate);
-      std::println("New Root Node Visit Count: {}", game.agent->root_node().visit_count.load());
 
       // Check win
       if (check_win(game.agent->last_move_board(), current_player)) {
