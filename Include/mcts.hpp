@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ForbiddenPointFinder.h"
 #include "config.hpp"
 #include "network.hpp"
 #include <array>
@@ -32,14 +33,16 @@ enum class NodeState : int {
 // - Two consecutive passes result in draw (detected in check_consecutive_passes)
 // - Pass moves are stored in children[Network::PASS_IDX]
 struct Node {
+  static constexpr float VIRTUAL_LOSS_VALUE = -1.0f;
   Node *parent;
   Utils::STONE_COLOR current_color;
   Utils::STONE_COLOR opponent_color;
   float prior_p;
   std::atomic<int> visit_count{0};
   std::atomic<float> value_sum{0.0f};
-  std::atomic<int> virtual_loss_count{0};
   std::atomic<NodeState> state{NodeState::UNEXPANDED};
+  std::atomic<int> backup_factor{0};
+  std::array<bool, Config::BOARD_SQUARES + 1> legal_moves; // +1 for pass move
   bool is_end_node = false;
 
   Utils::Board board_state;
@@ -54,7 +57,6 @@ struct Node {
   Node(Node *parent_, float prior, Utils::STONE_COLOR turn, const Utils::Board &current_board, int action_idx)
       : parent(parent_), current_color(turn), opponent_color(turn == Utils::BLACK ? Utils::WHITE : Utils::BLACK),
         prior_p(prior), board_state(current_board), prior_action_idx(action_idx) {
-
     bool game_ended = false;
     float game_result = 0.0f;
     if (prior_action_idx != -1) { // this is not the initial board node
@@ -84,6 +86,17 @@ struct Node {
       state.store(NodeState::UNEXPANDED);
       // network_result will be set during evaluation
     }
+
+    legal_moves = Utils::legal_moves(board_state);
+    if (current_color == Utils::BLACK) {
+      CForbiddenPointFinder fpf(board_state);
+      for (int i = 0; i < Config::BOARD_SQUARES; ++i) {
+        auto [r, c] = Utils::index_to_coordinate(i);
+        if (fpf.isForbidden(r, c)) {
+          legal_moves[i] = false;
+        }
+      }
+    }
   }
 
   // Helper methods to access policy and value
@@ -92,15 +105,6 @@ struct Node {
       throw std::runtime_error("Invalid access to policy of end node or unevaluated node");
     }
     return network_result->first;
-  }
-
-  // Safe policy access for unexpanded nodes (returns uniform distribution)
-  float get_policy_safe(int action_idx) const {
-    if (is_end_node || !network_result) {
-      // For end nodes or unevaluated nodes, return uniform distribution
-      return 1.0f / static_cast<float>(Config::BOARD_SQUARES + 1); // +1 for pass move
-    }
-    return network_result->first[action_idx];
   }
 
   float value() const {
@@ -126,23 +130,20 @@ struct Node {
     return state.compare_exchange_strong(expected, NodeState::EXPANDING);
   }
 
-  float child_score(const Node &child) const {
-    int visit_count_of_child = child.visit_count.load();
-    int virtual_loss_of_child = child.virtual_loss_count.load();
-    float value_sum_of_child = child.value_sum.load();
-
-    // Adjust for virtual loss: virtual losses count as negative visits
-    int effective_visits = visit_count_of_child + virtual_loss_of_child;
-    float effective_value_sum = value_sum_of_child - static_cast<float>(virtual_loss_of_child);
-
-    float q = (effective_visits == 0) ? 0.0f : -(effective_value_sum / static_cast<float>(effective_visits));
-    float u = Config::C_PUCT * child.prior_p * std::sqrt(static_cast<float>(this->visit_count.load())) /
-              (1.0f + effective_visits);
+  float score() const {
+    if (parent == nullptr) {
+      throw std::runtime_error("Calling score() on root node");
+    }
+    int visit_count_of_node = visit_count.load();
+    float value_sum_of_node = value_sum.load();
+    int parent_visit_count = parent->visit_count.load();
+    float q = (visit_count_of_node == 0) ? 0.0f : value_sum_of_node / static_cast<float>(visit_count_of_node);
+    float u =
+        Config::C_PUCT * prior_p * std::sqrt(static_cast<float>(parent_visit_count)) / (1.0f + visit_count_of_node);
     return q + u;
   }
 
   std::pair<int, Node *> select_child() const {
-    auto legal_moves_vec = Utils::legal_moves(board_state);
     Node *best_child = nullptr;
     int best_action_idx = -1;
     float max_score = -std::numeric_limits<float>::infinity();
@@ -151,12 +152,12 @@ struct Node {
 
     // Check regular moves
     for (int i = 0; i < Config::BOARD_SQUARES; ++i) {
-      if (!legal_moves_vec[i])
+      if (!legal_moves[i])
         continue;
 
-      float score = (children[i] != nullptr) ? child_score(*children[i].get())
-                                             : Config::C_PUCT * get_policy_safe(i) *
-                                                   std::sqrt(static_cast<float>(current_node_total_visits));
+      float score = (children[i] != nullptr)
+                        ? children[i]->score()
+                        : Config::C_PUCT * policy()[i] * std::sqrt(static_cast<float>(current_node_total_visits));
 
       if (score > max_score) {
         max_score = score;
@@ -167,8 +168,8 @@ struct Node {
 
     // Check pass move (always legal)
     int pass_idx = Network::PASS_IDX;
-    float pass_score = (children[pass_idx] != nullptr) ? child_score(*children[pass_idx].get())
-                                                       : Config::C_PUCT * get_policy_safe(pass_idx) *
+    float pass_score = (children[pass_idx] != nullptr) ? children[pass_idx]->score()
+                                                       : Config::C_PUCT * policy()[pass_idx] *
                                                              std::sqrt(static_cast<float>(current_node_total_visits));
 
     if (pass_score > max_score) {
@@ -180,31 +181,51 @@ struct Node {
     return {best_action_idx, best_child};
   }
 
-  void backpropagate(float backup_value) {
+  void apply_virtual_loss(int n) { // we only define the apply function here, cleaning-up is done in backpropagation
+    visit_count.fetch_add(n);
+    value_sum.fetch_add(n * VIRTUAL_LOSS_VALUE);
+  }
+
+  void backup_after_evaluation(float backup_value) {
     Node *current = this;
     auto v = backup_value;
+    auto bf = backup_factor.load();
+    backup_factor.store(0);
+
+    auto added_visit_count = bf;
+    auto added_value_sum = bf * VIRTUAL_LOSS_VALUE;
+
+    auto final_visit_count = 1 + bf;
+    auto final_value_sum = final_visit_count * backup_value;
+
+    auto delta_visit_count = final_visit_count - added_visit_count;
+    auto delta_value_sum = final_value_sum - added_value_sum;
+
     while (current != nullptr) {
-      current->visit_count.fetch_add(1);
-      current->value_sum.fetch_add(v);
+      current->visit_count.fetch_add(delta_visit_count);
+      current->value_sum.fetch_add(delta_value_sum);
       v *= -1.0f;
       current = current->parent;
     }
   }
 
-  // Add virtual loss to the path from root to this node
-  void add_virtual_loss() {
+  void backup_end_node(float backup_value) {
     Node *current = this;
-    while (current != nullptr) {
-      current->virtual_loss_count.fetch_add(1);
-      current = current->parent;
-    }
-  }
+    auto v = backup_value;
 
-  // Remove virtual loss from the path from root to this node
-  void remove_virtual_loss() {
-    Node *current = this;
+    auto added_visit_count = 1;
+    auto added_value_sum = VIRTUAL_LOSS_VALUE;
+
+    auto final_visit_count = 1;
+    auto final_value_sum = backup_value;
+
+    auto delta_visit_count = final_visit_count - added_visit_count; // this is always 0
+    auto delta_value_sum = final_value_sum - added_value_sum;
+
     while (current != nullptr) {
-      current->virtual_loss_count.fetch_sub(1);
+      // current->visit_count.fetch_add(delta_visit_count); // this is always 0
+      current->value_sum.fetch_add(delta_value_sum);
+      v *= -1.0f;
       current = current->parent;
     }
   }
@@ -307,11 +328,10 @@ private:
 
 //
 class MCTSAgent {
-private:
-public:
-  std::unique_ptr<Node> root;
 
 private:
+  std::unique_ptr<Node> last_root;
+  std::unique_ptr<Node> *root_ptr;
   static constexpr float VIRTUAL_LOSS_VALUE = -0.1f;
   std::vector<std::unique_ptr<std::thread>> worker_threads;
   std::atomic<bool> stop_search{false};
@@ -319,6 +339,11 @@ private:
   int num_threads;
   int target_simulations;
 
+public:
+  Node &root_node() { return *(*root_ptr); }
+  const Node &root_node() const { return *(*root_ptr); }
+
+private:
   void worker_loop() {
     while (!stop_search.load()) {
       if (simulations_completed.load() >= target_simulations) {
@@ -331,70 +356,55 @@ private:
   }
 
   void run_single_simulation() {
-    Node *node = root.get();
-    std::vector<Node *> path;
+    Node *node = &root_node();
     float backup_value = 0.0f;
-
     // --- Phase 1: Descend through the EXPANDED part of the tree ---
     while (node->is_evaluated() && !node->is_end_node) {
-      path.push_back(node);
+      node->apply_virtual_loss(1);
       auto [best_action_idx, next_node] = node->select_child();
-
       if (next_node == nullptr) {
-        // We've chosen an action that leads to a node that needs to be created.
         std::lock_guard<std::mutex> lock(node->node_mutex);
         auto &child_ptr = node->children[best_action_idx];
-        if (child_ptr == nullptr) { // Double-check after lock
+        if (child_ptr == nullptr) {
           child_ptr = std::make_unique<Node>(node, node->policy()[best_action_idx], node->opponent_color,
                                              node->board_state, best_action_idx);
         }
         node = child_ptr.get();
       } else {
-        // The child already existed, just move to it.
         node = next_node;
       }
     }
-
-    // --- Phase 2: Handle the "edge" node found by the loop ---
-    path.push_back(node);
-
-    // CRITICAL: Apply virtual loss BEFORE any potential blocking/waiting
-    for (Node *n : path) {
-      n->virtual_loss_count.fetch_add(1);
-    }
-
-    if (node->is_end_node) {
-      // We reached a terminal node.
-      backup_value = node->value();
-    } else if (node->is_expanding()) {
-      // We collided with a node another thread is currently evaluating.
-      backup_value = VIRTUAL_LOSS_VALUE; // Small negative value for virtual loss
-    } else {                             // The node must be UNEXPANDED.
-      // Try to claim and evaluate this leaf node.
+    // Handle the edge node
+    node->apply_virtual_loss(1);
+    if (node->is_end_node) { // terminal node
+      node->backup_end_node(node->value());
+      return;
+    } else if (node->is_expanding()) { // expanding node, no value to backpropagate
+      node->backup_factor.fetch_add(1);
+      return;
+    } else {
+      // unexpanded node, try to claim and evaluate
       if (node->try_claim_for_expansion()) {
         node->evaluate_with_network();
         backup_value = node->value();
+        node->backup_after_evaluation(backup_value);
+        return;
       } else {
-        // We lost the race to claim it. Treat as a collision.
-        backup_value = VIRTUAL_LOSS_VALUE; // Small negative value for virtual loss
+        // failed to claim, another thread is evaluating this node
+        // this is an expanding node, no value to backpropagate
+        node->backup_factor.fetch_add(1);
+        return;
       }
-    }
-
-    // --- Phase 3: Backpropagation ---
-    node->backpropagate(backup_value);
-
-    // Remove virtual loss from the entire path
-    for (Node *n : path) {
-      n->virtual_loss_count.fetch_sub(1);
     }
   }
 
 public:
   MCTSAgent(const Utils::Board &initial_board, Utils::STONE_COLOR player_color, int num_threads = 8)
-      : root(std::make_unique<Node>(nullptr, 1.0f, player_color, initial_board, -1)), num_threads(num_threads) {
+      : last_root(std::make_unique<Node>(nullptr, 1.0f, player_color, initial_board, -1)), root_ptr(&last_root),
+        num_threads(num_threads) {
     // Root node should be evaluated immediately (no race condition for root)
-    if (!root->is_end_node && root->try_claim_for_expansion()) {
-      root->evaluate_with_network();
+    if (!root_node().is_end_node && root_node().try_claim_for_expansion()) {
+      root_node().evaluate_with_network();
     }
   }
 
@@ -426,15 +436,16 @@ public:
     }
   }
 
-  int last_move_idx() const { return root->prior_action_idx; }
+  int last_move_idx() const { return root_node().prior_action_idx; }
 
   int next_move_idx() const {
+    const auto &root = root_node();
     int max_visits = -1;
     int best_move_idx = -1;
     // Check all moves including pass move
     for (int i = 0; i <= Config::BOARD_SQUARES; ++i) {
-      if (root->children[i] != nullptr) {
-        int child_visits = root->children[i]->visit_count.load();
+      if (root.children[i] != nullptr) {
+        int child_visits = root.children[i]->visit_count.load();
         if (child_visits > max_visits) {
           max_visits = child_visits;
           best_move_idx = i;
@@ -453,16 +464,29 @@ public:
     }
     worker_threads.clear();
 
-    auto &new_root = root->children[move_idx];
+    last_root = std::move(*root_ptr);
+    auto &new_root = last_root->children[move_idx];
     if (new_root == nullptr) {
-      new_root = std::make_unique<Node>(nullptr, 1.0f, root->opponent_color, root->board_state, move_idx);
+      new_root = std::make_unique<Node>(nullptr, 1.0f, last_root->opponent_color, last_root->board_state, move_idx);
     }
-    root = std::move(new_root);
-    root->parent = nullptr; // reset parent to nullptr for the new root
+    root_ptr = &new_root;
+    new_root->parent = nullptr; // reset parent to nullptr for the new root
     // Ensure new root is evaluated (no race condition for root)
-    if (!root->is_end_node && root->try_claim_for_expansion()) {
-      root->evaluate_with_network();
+    if (!new_root->is_end_node && new_root->try_claim_for_expansion()) {
+      new_root->evaluate_with_network();
     }
+  }
+
+  void undo_last_move() {
+    stop_search.store(true);
+    for (auto &thread : worker_threads) {
+      if (thread && thread->joinable()) {
+        thread->join();
+      }
+    }
+    worker_threads.clear();
+    root_node().parent = last_root.get();
+    root_ptr = &last_root;
   }
 
   // Helper method to check if a move is a pass
@@ -478,9 +502,9 @@ public:
     return "(" + std::to_string(r) + "," + std::to_string(c) + ")";
   }
 
-  Utils::STONE_COLOR last_move_color() const { return root->current_color; }
-  Utils::STONE_COLOR next_move_color() const { return root->opponent_color; }
-  const Utils::Board &last_move_board() const { return root->board_state; }
+  Utils::STONE_COLOR last_move_color() const { return root_node().current_color; }
+  Utils::STONE_COLOR next_move_color() const { return root_node().opponent_color; }
+  const Utils::Board &last_move_board() const { return root_node().board_state; }
 
   int get_simulations_completed() const { return simulations_completed.load(); }
   void set_num_threads(int new_num_threads) { num_threads = new_num_threads; }

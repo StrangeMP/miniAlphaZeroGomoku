@@ -1,15 +1,19 @@
 #include "config.hpp"
 #include "gomoku_record.hpp"
+#include "heuristic.hpp"
 #include "mcts.hpp"
 #include "network.hpp"
+#include "utils.hpp"
 #include <atomic>
 #include <chrono>
 #include <fstream>
-#include <iomanip>
 #include <iostream>
+#include <optional>
 #include <print>
+#include <queue>
 #include <string>
 #include <thread>
+#include <windows.h>
 
 using namespace MCTS;
 using namespace GomokuRecord;
@@ -22,56 +26,151 @@ private:
   std::chrono::high_resolution_clock::time_point game_start_time;
   std::chrono::milliseconds total_thinking_time{0};
   std::atomic<bool> is_thinking{false};
+  std::chrono::high_resolution_clock::time_point thinking_start_time;
+  HWND timer_window = nullptr;
+  std::thread window_thread;
+
+  static ThinkingTimer *instance;
+
+  static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    if (instance) {
+      return instance->HandleWindowMessage(hwnd, msg, wParam, lParam);
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+  }
+
+  LRESULT HandleWindowMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+      case WM_DESTROY:
+        PostQuitMessage(0);
+        return 0;
+      case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+        RECT rect;
+        GetClientRect(hwnd, &rect);
+        SetBkMode(hdc, OPAQUE);
+        SetTextColor(hdc, RGB(255, 255, 255));
+        SetBkColor(hdc, RGB(0, 0, 0));
+
+        // 获取当前时间并显示
+        auto now = std::chrono::high_resolution_clock::now();
+        auto total_milliseconds = total_thinking_time.count();
+
+        // 如果正在思考，加上当前思考时间
+        if (is_thinking) {
+          auto current_thinking = std::chrono::duration_cast<std::chrono::milliseconds>(now - thinking_start_time);
+          total_milliseconds = (total_thinking_time + current_thinking).count();
+        }
+
+        auto total_seconds = total_milliseconds / 1000;
+        auto minutes = total_seconds / 60;
+        auto seconds = total_seconds % 60;
+        auto milliseconds = total_milliseconds % 1000;
+
+        std::wstring time_text = std::to_wstring(minutes) + L":" + (seconds < 10 ? L"0" : L"") +
+                                 std::to_wstring(seconds) + L"." + (milliseconds < 100 ? L"0" : L"") +
+                                 (milliseconds < 10 ? L"0" : L"") + std::to_wstring(milliseconds);
+        DrawTextW(hdc, time_text.c_str(), -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        EndPaint(hwnd, &ps);
+        return 0;
+      }
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+  }
 
 public:
   void startGame() {
     running = true;
     game_start_time = std::chrono::high_resolution_clock::now();
     total_thinking_time = std::chrono::milliseconds{0};
+
+    // 设置静态实例指针
+    instance = this;
+
+    // 创建独立的时间显示窗口
+    window_thread = std::thread([this]() {
+      // 注册窗口类
+      WNDCLASSEXW wc = {};
+      wc.cbSize = sizeof(WNDCLASSEXW);
+      wc.lpfnWndProc = WindowProc;
+      wc.hInstance = GetModuleHandle(nullptr);
+      wc.lpszClassName = L"TimerWindow";
+      wc.hbrBackground = CreateSolidBrush(RGB(0, 0, 0)); // 黑色背景
+      wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+
+      RegisterClassExW(&wc);
+
+      // 创建窗口
+      timer_window = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, L"TimerWindow", L"AI Thinking Time",
+                                     WS_POPUP | WS_VISIBLE | WS_CAPTION, 100, 100, 200, 80, nullptr, nullptr,
+                                     GetModuleHandle(nullptr), nullptr);
+
+      // 消息循环
+      MSG msg;
+      while (running && GetMessage(&msg, nullptr, 0, 0)) {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+      }
+
+      if (timer_window) {
+        DestroyWindow(timer_window);
+        timer_window = nullptr;
+      }
+    });
+
+    // 计时器线程
     timer_thread = std::thread([this]() {
       while (running) {
-        if (is_thinking) {
-          auto now = std::chrono::high_resolution_clock::now();
-          auto current_thinking =
-              std::chrono::duration_cast<std::chrono::milliseconds>(now - game_start_time) - total_thinking_time;
-          auto total_milliseconds = (total_thinking_time + current_thinking).count();
-          auto total_seconds = total_milliseconds / 1000;
-          auto minutes = total_seconds / 60;
-          auto seconds = total_seconds % 60;
-
-          // 在屏幕右上角显示累计计时器 (分钟:秒钟格式)
-          std::print("\r\x1B[1;60HAI Total: {:02}:{:02}", minutes, seconds);
-          std::cout << std::flush;
+        // 每秒重绘窗口以更新时间显示
+        if (timer_window) {
+          InvalidateRect(timer_window, nullptr, TRUE);
+          UpdateWindow(timer_window);
         }
+
         std::this_thread::sleep_for(std::chrono::milliseconds(1000)); // 每秒更新一次
       }
     });
   }
 
-  void startThinking() { is_thinking = true; }
+  void startThinking() {
+    is_thinking = true;
+    thinking_start_time = std::chrono::high_resolution_clock::now();
+  }
 
   void stopThinking() {
-    is_thinking = false;
-    auto now = std::chrono::high_resolution_clock::now();
-    auto current_thinking =
-        std::chrono::duration_cast<std::chrono::milliseconds>(now - game_start_time) - total_thinking_time;
-    total_thinking_time += current_thinking;
+    if (is_thinking) {
+      is_thinking = false;
+      auto now = std::chrono::high_resolution_clock::now();
+      auto current_thinking = std::chrono::duration_cast<std::chrono::milliseconds>(now - thinking_start_time);
+      total_thinking_time += current_thinking;
+    }
   }
 
   void stopGame() {
     running = false;
     is_thinking = false;
+
+    // 关闭窗口
+    if (timer_window) {
+      PostMessage(timer_window, WM_DESTROY, 0, 0);
+    }
+
+    // 等待线程结束
     if (timer_thread.joinable()) {
       timer_thread.join();
     }
-    // 清除计时器显示
-    std::print("\r\x1B[1;60H{}\r", std::string(20, ' '));
-    std::cout << std::flush;
+    if (window_thread.joinable()) {
+      window_thread.join();
+    }
   }
 
   // 获取总思考时间（秒）
   double getTotalThinkingTime() { return total_thinking_time.count() / 1000.0; }
 };
+
+// 定义静态成员变量
+ThinkingTimer *ThinkingTimer::instance = nullptr;
 
 // Game settings structure
 struct GameSettings {
@@ -141,7 +240,7 @@ public:
     std::print("\n");
     std::print("   ");
     for (int i = 0; i < Config::BOARD_SIZE; i++) {
-      std::print("{:2} ", static_cast<char>('A' + i));
+      std::print("{:2} ", i + 1);
     }
     std::print("\n");
 
@@ -158,13 +257,12 @@ public:
       std::print("{:2}\n", i + 1);
     }
 
-    std::print("   ");
+    std::print("    ");
     for (int i = 0; i < Config::BOARD_SIZE; i++) {
       std::print("{:2} ", static_cast<char>('A' + i));
     }
     std::print("\n\n");
   }
-
   // Main menu
   void show_main_menu() {
     std::println("\n=== Gomoku Game ===");
@@ -240,22 +338,204 @@ public:
 
   // AI换手判断函数 (占位符)
   bool ai_should_swap(const Utils::Board &board) {
-    // TODO: 实现AI换手判断逻辑
-    // 这里应该分析棋盘局势，判断是否应该换手
-    // 暂时返回false作为占位符
-    return false;
+    auto result = Network::evaluate(board, Utils::WHITE);
+    return result->second < -0.0f;
   }
 
-  // AI第五手N个落子位置函数 (占位符)
+  // AI第五手N个落子位置
   std::vector<int> ai_get_n_moves(const Utils::Board &board, int n) {
-    // TODO: 实现AI第五手N个落子位置逻辑
-    // 这里应该分析棋盘局势，返回n个最佳的落子位置
-    // 暂时返回n个默认位置作为占位符
-    std::vector<int> moves;
-    for (int i = 0; i < n; i++) {
-      moves.push_back(60 + i); // 示例位置
+    auto root = &game.agent->root_node();
+    assert(root->current_color == Utils::BLACK);
+    auto cmp = [root](int idx1, int idx2) {
+      return root->children[idx1]->visit_count.load() < root->children[idx2]->visit_count.load();
+    };
+    std::priority_queue<int, std::vector<int>, decltype(cmp)> pq(cmp);
+    for (int i = 0; i < Config::BOARD_SQUARES; ++i) {
+      if (root->children[i]) {
+        pq.push(i);
+      }
     }
-    return moves;
+    std::vector<int> top_moves;
+    for (int i = 0; i < n && !pq.empty(); ++i) {
+      top_moves.push_back(pq.top());
+      pq.pop();
+    }
+    // The following logic handles the very rare case that the top n moves are not enough
+    if (top_moves.size() < n) {
+      // Pick rest moves from legal moves in the central 5x5 area
+      // Find legal moves in the central 5x5 area
+      int center = Config::BOARD_SIZE / 2;
+      int half = 2; // 5x5 area: center-2 to center+2
+      const auto &legal_moves = root->legal_moves;
+      for (int dr = -half; dr <= half; ++dr) {
+        for (int dc = -half; dc <= half; ++dc) {
+          int r = center + dr;
+          int c = center + dc;
+          if (r >= 0 && r < Config::BOARD_SIZE && c >= 0 && c < Config::BOARD_SIZE) {
+            int idx = r * Config::BOARD_SIZE + c;
+            if (legal_moves[idx]) {
+              // Avoid duplicates
+              if (std::find(top_moves.begin(), top_moves.end(), idx) == top_moves.end()) {
+                top_moves.push_back(idx);
+                if (top_moves.size() == n)
+                  break;
+              }
+            }
+          }
+        }
+        if (top_moves.size() == n)
+          break;
+      }
+      // If still not enough, fill from any remaining legal moves
+      if (top_moves.size() < n) {
+        for (int i = 0; i < Config::BOARD_SQUARES; ++i) {
+          if (legal_moves[i]) {
+            if (std::find(top_moves.begin(), top_moves.end(), i) == top_moves.end()) {
+              top_moves.push_back(i);
+              if (top_moves.size() == n)
+                break;
+            }
+          }
+        }
+      }
+    }
+    return top_moves;
+  }
+
+  // AI选择玩家提供的N个位置中的哪一个
+  int ai_choose_from_player_moves(const Utils::Board &board, const std::vector<int> &player_moves) {
+    auto root = &game.agent->root_node();
+    assert(root->current_color == Utils::BLACK);
+    auto cmp = [root](int idx1, int idx2) -> bool {
+      // priority queue maintains the second operand near heap top when the cmp returns true
+      if (!root->children[idx2]) { // if the second operand is not a child, it is a bad move for black, but a good move
+                                   // for white
+        return true;
+      } else if (!root->children[idx1]) {
+        return false;
+      } else {
+        return root->children[idx1]->visit_count.load() > root->children[idx2]->visit_count.load();
+      }
+    };
+    std::priority_queue<int, std::vector<int>, decltype(cmp)> pq(cmp);
+    for (int i = 0; i < player_moves.size(); ++i) {
+      pq.push(player_moves[i]);
+    }
+    return pq.top();
+  }
+
+  // 坐标转换和验证函数
+  struct CoordinateResult {
+    bool valid;
+    int x, y;
+    int index;
+    std::string error_message;
+  };
+
+  // 解析字符串坐标为坐标和索引
+  CoordinateResult parse_coordinate(const std::string &input) {
+    CoordinateResult result = {false, -1, -1, -1, ""};
+
+    if (input.length() < 2) {
+      result.error_message = "Invalid input format! Please use format: Letter + Number (e.g., H8).";
+      return result;
+    }
+
+    char col = input[0];
+    int row;
+    try {
+      row = std::stoi(input.substr(1));
+    } catch (const std::exception &) {
+      result.error_message = "Invalid row number! Please enter a valid number.";
+      return result;
+    }
+
+    int x = col - 'A';
+    int y = row - 1;
+
+    if (x < 0 || x >= Config::BOARD_SIZE || y < 0 || y >= Config::BOARD_SIZE) {
+      result.error_message = "Invalid coordinates! Please enter valid coordinates (e.g., A1-O15).";
+      return result;
+    }
+
+    result.valid = true;
+    result.x = x;
+    result.y = y;
+    result.index = y * Config::BOARD_SIZE + x;
+    return result;
+  }
+
+  // 将索引转换为字符串坐标
+  std::string index_to_coordinate(int index) {
+    if (index < 0 || index > Config::BOARD_SQUARES) {
+      return "INVALID";
+    } else if (index == Config::BOARD_SQUARES) {
+      return "PASS";
+    }
+    int r = index / Config::BOARD_SIZE;
+    int c = index % Config::BOARD_SIZE;
+    char col = 'A' + c;
+    return std::string(1, col) + std::to_string(r + 1);
+  }
+
+  // 验证数字输入是否在指定范围内
+  bool validate_number_input(int &value, int min_val, int max_val, const std::string &prompt) {
+    bool valid_input = false;
+    while (!valid_input) {
+      std::print("{}: ", prompt);
+      std::cin >> value;
+
+      if (value >= min_val && value <= max_val) {
+        valid_input = true;
+      } else {
+        std::println("Invalid number! Please enter a number between {} and {}.", min_val, max_val);
+      }
+    }
+    return true;
+  }
+
+  // 获取用户输入的坐标
+  CoordinateResult get_user_coordinate(const Utils::Board &board, const std::string &prompt) {
+    CoordinateResult result;
+    bool valid_coordinate = false;
+
+    while (!valid_coordinate) {
+      std::string coord_input;
+      std::print("{}: ", prompt);
+      std::cin >> coord_input;
+
+      result = parse_coordinate(coord_input);
+      if (!result.valid) {
+        std::println("{}", result.error_message);
+        continue;
+      }
+
+      if (board[result.y][result.x] == Utils::EMPTY) {
+        valid_coordinate = true;
+      } else {
+        std::println("Position already occupied! Please choose another position.");
+      }
+    }
+
+    return result;
+  }
+
+  // 显示坐标列表
+  void display_coordinate_list(const std::vector<int> &moves, const std::string &title) {
+    std::println("{}", title);
+    for (size_t i = 0; i < moves.size(); i++) {
+      std::print("{}. {}\t", i + 1, index_to_coordinate(moves[i]));
+    }
+    std::print("\n");
+  }
+
+  // 清屏函数
+  void clear_screen() {
+#if defined(_WIN32) || defined(_WIN64)
+    std::system("cls");
+#else
+    std::system("clear");
+#endif
   }
 
   // Apply fixed opening moves to board
@@ -294,30 +574,9 @@ public:
 
         // Input 2 additional coordinates
         for (int i = 1; i < 3; i++) {
-          bool valid_input = false;
-          while (!valid_input) {
-            std::string input;
-            std::print("Enter coordinate {}: ", i + 1);
-            std::cin >> input;
-
-            if (input.length() >= 2) {
-              char col = input[0];
-              int row = std::stoi(input.substr(1));
-
-              int x = col - 'A';
-              int y = row - 1;
-
-              if (x >= 0 && x < Config::BOARD_SIZE && y >= 0 && y < Config::BOARD_SIZE) {
-                coordinates[i][0] = y;
-                coordinates[i][1] = x;
-                valid_input = true;
-              } else {
-                std::println("Invalid coordinate! Please enter a valid coordinate (e.g., A1-O15).");
-              }
-            } else {
-              std::println("Invalid input format! Please use format: Letter + Number (e.g., I9).");
-            }
-          }
+          auto coord_result = get_user_coordinate(board, "Enter coordinate " + std::to_string(i + 1));
+          coordinates[i][0] = coord_result.y;
+          coordinates[i][1] = coord_result.x;
         }
 
         // Apply moves: Black (H8), White, Black
@@ -328,6 +587,20 @@ public:
         std::println("Custom opening applied! (H8 + your 2 coordinates)");
         break;
     }
+  }
+
+  std::optional<int> get_win_point(Node *node) {
+    auto threats = find_all_threats(node->board_state, node->current_color);
+    const auto &legal_moves = node->legal_moves;
+    for (auto [coord, threat_type] : threats) {
+      if (threat_type == 2) {
+        auto idx = Utils::coordinate_to_index(coord);
+        if (legal_moves[idx]) {
+          return idx;
+        }
+      }
+    }
+    return std::nullopt;
   }
 
   // Game setup
@@ -381,10 +654,11 @@ public:
 
     // 2. 换手逻辑
     bool should_swap = false;
-    if (!game.my_turn_first) {
+    if (game.my_turn_first) {
       // AI先手，使用AI换手判断函数
       should_swap = ai_should_swap(board);
       std::println("AI decides to {} colors.", (should_swap ? "swap" : "not swap"));
+      std::this_thread::sleep_for(std::chrono::seconds(10));
     } else {
       // 玩家先手，询问玩家是否换手
       std::print("Do you want to swap colors? (y/n): ");
@@ -430,14 +704,58 @@ public:
 
     print_board(game.agent->last_move_board());
     float win_rate = 0.0f;
+    int move_idx = -1;
     while (!game.game_ended && move_count < Config::BOARD_SQUARES) {
       const Utils::Board &root_board = game.agent->last_move_board();
       bool is_my_turn = (current_player == Utils::BLACK && game.my_turn_first) ||
                         (current_player == Utils::WHITE && !game.my_turn_first);
-
+      std::println("move_count: {}", move_count);
       if (is_my_turn) {
         // Player's turn
         std::print("Your turn ({}): ", (current_player == Utils::BLACK ? "Black" : "White"));
+
+        // 五手N打
+        if (move_count == 5) {
+          // 第五手特殊处理：玩家显示N个落子位置供AI选择
+          std::println("\n=== Fifth Move Selection (Player's Turn) ===");
+
+          // 1. 让玩家输入N是几
+          int num_positions;
+          validate_number_input(num_positions, 2, 5, "How many positions do you want to offer? (2-5)");
+
+          // 2. 让玩家输入这N个坐标
+          std::vector<int> player_moves;
+          std::println("Please enter {} coordinates:", num_positions);
+
+          for (int i = 0; i < num_positions; i++) {
+            auto coord_result = get_user_coordinate(root_board, "Enter coordinate " + std::to_string(i + 1));
+            player_moves.push_back(coord_result.index);
+          }
+
+          // 显示玩家提供的N个位置
+          display_coordinate_list(player_moves, "You offered " + std::to_string(num_positions) + " positions:");
+
+          // 3. 调用函数返回AI选择哪一个位置落子
+          int ai_choice = ai_choose_from_player_moves(root_board, player_moves);
+
+          // 4. 应用这个坐标然后继续游戏
+          if (ai_choice != -1) {
+            std::println("AI chose position: {}", index_to_coordinate(ai_choice));
+
+            game.agent->apply_move(ai_choice);
+            game.record.addMove(current_player == Utils::BLACK ? Utils::BLACK : Utils::WHITE, ai_choice);
+            game.consecutive_passes = 0;
+
+            // 继续到下一个玩家
+            current_player = (current_player == Utils::BLACK ? Utils::WHITE : Utils::BLACK);
+            move_count++;
+            continue;
+          } else {
+            std::println("AI failed to choose a valid position!");
+            continue;
+          }
+        }
+
         std::string input;
         std::cin >> input;
 
@@ -447,19 +765,13 @@ public:
         }
 
         if (input == "undo") {
-          if (game.record.undoLastMove()) {
-            std::println("Undo successful");
-            // Reinitialize agent state, simplified handling
-            continue;
-          } else {
-            std::println("Cannot undo");
-            continue;
-          }
+          game.agent->undo_last_move();
+          continue;
         }
 
         if (input == "pass") {
           std::println("You chose to pass");
-          game.agent->apply_move(-1);
+          game.agent->apply_move(Network::PASS_IDX);
           game.consecutive_passes++;
           game.record.addMove(current_player == Utils::BLACK ? Utils::BLACK : Utils::WHITE, -1);
 
@@ -471,30 +783,32 @@ public:
           }
         } else {
           // Parse coordinates
-          if (input.length() >= 2) {
-            char col = input[0];
-            int row = std::stoi(input.substr(1));
-
-            int x = col - 'A';
-            int y = row - 1;
-
-            if (x >= 0 && x < Config::BOARD_SIZE && y >= 0 && y < Config::BOARD_SIZE) {
-              if (root_board[y][x] == Utils::EMPTY) {
-                int move_idx = y * Config::BOARD_SIZE + x;
-                game.agent->apply_move(move_idx);
-                game.record.addMove(current_player == Utils::BLACK ? Utils::BLACK : Utils::WHITE, move_idx);
-                game.consecutive_passes = 0;
-                std::println("You placed stone: {}", input);
+          auto coord_result = parse_coordinate(input);
+          if (const auto &root_node = game.agent->root_node(); root_node.current_color == Utils::BLACK) {
+            if (!root_node.legal_moves[coord_result.index]) {
+              std::println("Illegal move!");
+              game.game_ended = true;
+              // Set game record result
+              if (game.my_turn_first) {
+                game.record.setResult(current_player == Utils::BLACK ? 1 : 2);
               } else {
-                std::println("Position already occupied!");
-                continue;
+                game.record.setResult(current_player == Utils::WHITE ? 1 : 2);
               }
-            } else {
-              std::println("Invalid coordinates!");
-              continue;
+              break;
             }
+          }
+          if (!coord_result.valid) {
+            std::println("{}", coord_result.error_message);
+            continue;
+          }
+
+          if (root_board[coord_result.y][coord_result.x] == Utils::EMPTY) {
+            game.agent->apply_move(coord_result.index);
+            game.record.addMove(current_player == Utils::BLACK ? Utils::BLACK : Utils::WHITE, coord_result.index);
+            game.consecutive_passes = 0;
+            std::println("You placed stone: {}", input);
           } else {
-            std::println("Invalid input!");
+            std::println("Position already occupied!");
             continue;
           }
         }
@@ -506,7 +820,7 @@ public:
 
         auto start = std::chrono::high_resolution_clock::now();
         // Calculate simulations based on thinking time (rough estimate)
-        int target_simulations = 800;
+        int target_simulations = 1600;
         game.agent->run_mcts(target_simulations);
         int sim_count = game.agent->get_simulations_completed();
         auto end = std::chrono::high_resolution_clock::now();
@@ -515,51 +829,36 @@ public:
         // 停止思考计时器
         thinking_timer.stopThinking();
 
-        int move_idx = game.agent->next_move_idx();
-        win_rate = game.agent->root->value();
+        move_idx = game.agent->next_move_idx();
+        auto win_point = get_win_point(&game.agent->root_node());
+        if (win_point) {
+          move_idx = *win_point;
+        }
+
+        win_rate = game.agent->root_node().value();
         // 五手N打
-        if (move_idx == 5) {
+        if (move_count == 5) {
           // 第五手特殊处理：AI显示N个落子位置供玩家选择
           std::println("\n=== Fifth Move Selection ===");
 
           // 让玩家输入位置数量
           int num_positions;
-          bool valid_input = false;
-          while (!valid_input) {
-            std::print("How many positions do you want? (2-5): ");
-            std::cin >> num_positions;
-
-            if (num_positions >= 2 && num_positions <= 5) {
-              valid_input = true;
-            } else {
-              std::println("Invalid number! Please enter a number between 2 and 5.");
-            }
-          }
+          validate_number_input(num_positions, 2, 5, "How many positions do you want? (2-5)");
 
           std::println("AI suggests {} possible moves:", num_positions);
 
           std::vector<int> n_moves = ai_get_n_moves(game.agent->last_move_board(), num_positions);
 
           // 显示N个位置
-          for (int i = 0; i < num_positions; i++) {
-            int r = n_moves[i] / Config::BOARD_SIZE;
-            int c = n_moves[i] % Config::BOARD_SIZE;
-            char col = 'A' + c;
-            std::print("{}. {}{}\t", i + 1, col, r + 1);
-          }
-          std::print("\n");
-          // 让玩家选择
-          std::print("Please choose a move (1-{}): ", num_positions);
-          int choice;
-          std::cin >> choice;
+          display_coordinate_list(n_moves, "AI suggests " + std::to_string(num_positions) + " possible moves:");
 
-          if (choice >= 1 && choice <= num_positions) {
-            move_idx = n_moves[choice - 1];
-            std::println("You chose move {}.", choice);
-          } else {
-            std::println("Invalid choice! Using first move.");
-            move_idx = n_moves[0];
-          }
+          // 让玩家选择
+          int choice;
+          validate_number_input(choice, 1, num_positions,
+                                "Please choose a move (1-" + std::to_string(num_positions) + ")");
+
+          move_idx = n_moves[choice - 1];
+          std::println("You chose move {}.", choice);
         }
         if (move_idx == Network::PASS_IDX) {
           std::println("AI chose to pass");
@@ -585,11 +884,13 @@ public:
       }
 
       print_board(game.agent->last_move_board());
+      std::println("AI placed at {}", index_to_coordinate(move_idx));
       std::println("AI Win Rate: {}", win_rate);
-      std::println("New Root Node Visit Count: {}", game.agent->root->visit_count.load());
+      std::println("New Root Node Visit Count: {}", game.agent->root_node().visit_count.load());
 
       // Check win
       if (check_win(game.agent->last_move_board(), current_player)) {
+        clear_screen();
         std::string winner = (current_player == Utils::BLACK ? "Black" : "White");
         std::println("{} wins!", winner);
         game.game_ended = true;
@@ -610,6 +911,27 @@ public:
     if (!game.game_ended) {
       std::println("Game is a draw!");
       game.record.setResult(0);
+    }
+
+    // 游戏结束，先清屏
+    clear_screen();
+
+    // 显示最终棋盘
+    std::println("\n=== Final Board ===");
+    print_board(game.agent->last_move_board());
+
+    // 显示游戏结果
+    if (game.game_ended) {
+      if (game.record.getCurrentStep() > 0) {
+        auto last_move = game.record.getLastMove();
+        if (last_move.color == Utils::BLACK) {
+          std::println("Game Result: 先手胜 (Black wins)");
+        } else {
+          std::println("Game Result: 后手胜 (White wins)");
+        }
+      }
+    } else {
+      std::println("Game Result: 平局 (Draw)");
     }
 
     // 停止游戏计时器并显示总思考时间
@@ -674,9 +996,9 @@ public:
     if (game.record.getCurrentStep() > 0) {
       auto last_move = game.record.getLastMove();
       if (last_move.color == Utils::BLACK) {
-        result_str = "First player wins";
+        result_str = "先手胜";
       } else {
-        result_str = "Second player wins";
+        result_str = "后手胜";
       }
     }
 
