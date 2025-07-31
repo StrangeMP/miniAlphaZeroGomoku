@@ -10,7 +10,7 @@
 
 class AsyncLogger {
 public:
-  static AsyncLogger &getInstance();
+  static AsyncLogger &getInstance(std::string_view filename);
 
   // Deleted copy and move constructors and assignment operators
   AsyncLogger(const AsyncLogger &) = delete;
@@ -25,7 +25,7 @@ public:
   void stop();
 
 private:
-  AsyncLogger(const std::string &filename = "dispatcher.log");
+  AsyncLogger(std::string_view filename);
   ~AsyncLogger();
 
   void writerLoop();

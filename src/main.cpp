@@ -2,14 +2,14 @@
 #include "gomoku_record.hpp"
 #include "mcts.hpp"
 #include "network.hpp"
+#include <atomic>
 #include <chrono>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <print>
 #include <string>
 #include <thread>
-#include <atomic>
-#include <print>
 
 using namespace MCTS;
 using namespace GomokuRecord;
@@ -22,7 +22,7 @@ private:
   std::chrono::high_resolution_clock::time_point game_start_time;
   std::chrono::milliseconds total_thinking_time{0};
   std::atomic<bool> is_thinking{false};
-  
+
 public:
   void startGame() {
     running = true;
@@ -32,12 +32,13 @@ public:
       while (running) {
         if (is_thinking) {
           auto now = std::chrono::high_resolution_clock::now();
-          auto current_thinking = std::chrono::duration_cast<std::chrono::milliseconds>(now - game_start_time) - total_thinking_time;
+          auto current_thinking =
+              std::chrono::duration_cast<std::chrono::milliseconds>(now - game_start_time) - total_thinking_time;
           auto total_milliseconds = (total_thinking_time + current_thinking).count();
           auto total_seconds = total_milliseconds / 1000;
           auto minutes = total_seconds / 60;
           auto seconds = total_seconds % 60;
-          
+
           // 在屏幕右上角显示累计计时器 (分钟:秒钟格式)
           std::print("\r\x1B[1;60HAI Total: {:02}:{:02}", minutes, seconds);
           std::cout << std::flush;
@@ -46,18 +47,17 @@ public:
       }
     });
   }
-  
-  void startThinking() {
-    is_thinking = true;
-  }
-  
+
+  void startThinking() { is_thinking = true; }
+
   void stopThinking() {
     is_thinking = false;
     auto now = std::chrono::high_resolution_clock::now();
-    auto current_thinking = std::chrono::duration_cast<std::chrono::milliseconds>(now - game_start_time) - total_thinking_time;
+    auto current_thinking =
+        std::chrono::duration_cast<std::chrono::milliseconds>(now - game_start_time) - total_thinking_time;
     total_thinking_time += current_thinking;
   }
-  
+
   void stopGame() {
     running = false;
     is_thinking = false;
@@ -68,11 +68,9 @@ public:
     std::print("\r\x1B[1;60H{}\r", std::string(20, ' '));
     std::cout << std::flush;
   }
-  
+
   // 获取总思考时间（秒）
-  double getTotalThinkingTime() {
-    return total_thinking_time.count() / 1000.0;
-  }
+  double getTotalThinkingTime() { return total_thinking_time.count() / 1000.0; }
 };
 
 // Game settings structure
@@ -110,13 +108,13 @@ struct GameSettings {
   }
 };
 
-  // Game interface class
-  class GameInterface {
-  private:
-    GameSettings settings;
-    enum MenuState { MAIN_MENU, SETTINGS, GAME_SETUP, GAME_PLAYING };
-    MenuState current_state;
-    ThinkingTimer thinking_timer;
+// Game interface class
+class GameInterface {
+private:
+  GameSettings settings;
+  enum MenuState { MAIN_MENU, SETTINGS, GAME_SETUP, GAME_PLAYING };
+  MenuState current_state;
+  ThinkingTimer thinking_timer;
 
   // Game state
   struct GameState {
@@ -133,6 +131,13 @@ public:
 
   // Display aligned board
   void print_board(const Utils::Board &board) {
+    // Clean the output layout before printing
+#if defined(_WIN32) || defined(_WIN64)
+    std::system("cls");
+#else
+    std::system("clear");
+#endif
+
     std::print("\n");
     std::print("   ");
     for (int i = 0; i < Config::BOARD_SIZE; i++) {
@@ -234,7 +239,7 @@ public:
   }
 
   // AI换手判断函数 (占位符)
-  bool ai_should_swap(const Utils::Board& board) {
+  bool ai_should_swap(const Utils::Board &board) {
     // TODO: 实现AI换手判断逻辑
     // 这里应该分析棋盘局势，判断是否应该换手
     // 暂时返回false作为占位符
@@ -242,7 +247,7 @@ public:
   }
 
   // AI第五手N个落子位置函数 (占位符)
-  std::vector<int> ai_get_n_moves(const Utils::Board& board, int n) {
+  std::vector<int> ai_get_n_moves(const Utils::Board &board, int n) {
     // TODO: 实现AI第五手N个落子位置逻辑
     // 这里应该分析棋盘局势，返回n个最佳的落子位置
     // 暂时返回n个默认位置作为占位符
@@ -254,39 +259,39 @@ public:
   }
 
   // Apply fixed opening moves to board
-  void apply_fixed_opening(Utils::Board& board, int opening_choice) {
+  void apply_fixed_opening(Utils::Board &board, int opening_choice) {
     // Clear board first
     for (auto &row : board)
       for (auto &cell : row)
         cell = Utils::EMPTY;
-    
+
     switch (opening_choice) {
-      case 1: // 疏星局 (B:H8,W:H9;B:J10)
-        board[7][7] = Utils::BLACK;   // H8
-        board[8][7] = Utils::WHITE;   // H9
-        board[9][9] = Utils::BLACK;   // J10
+      case 1:                       // 疏星局 (B:H8,W:H9;B:J10)
+        board[7][7] = Utils::BLACK; // H8
+        board[8][7] = Utils::WHITE; // H9
+        board[9][9] = Utils::BLACK; // J10
         break;
-      case 2: // 长星局 (B:H8;W:I9;B:J10)
-        board[7][7] = Utils::BLACK;   // H8
-        board[8][8] = Utils::WHITE;   // I9
-        board[9][9] = Utils::BLACK;   // J10
+      case 2:                       // 长星局 (B:H8;W:I9;B:J10)
+        board[7][7] = Utils::BLACK; // H8
+        board[8][8] = Utils::WHITE; // I9
+        board[9][9] = Utils::BLACK; // J10
         break;
-      case 3: // 流星局 (B:H8;W:I9;B:J6)
-        board[7][7] = Utils::BLACK;   // H8
-        board[8][8] = Utils::WHITE;   // I9
-        board[5][9] = Utils::BLACK;   // J6
+      case 3:                       // 流星局 (B:H8;W:I9;B:J6)
+        board[7][7] = Utils::BLACK; // H8
+        board[8][8] = Utils::WHITE; // I9
+        board[5][9] = Utils::BLACK; // J6
         break;
       case 4: // 自定义开局
         std::println("\n=== Custom Opening Setup ===");
         std::println("First move is fixed at H8 (Black)");
         std::println("Please input 2 additional coordinates (e.g., I9 J10):");
         std::println("Format: Letter + Number (e.g., I9, J10)");
-        
+
         // Store the 3 coordinates (first is fixed at H8)
         int coordinates[3][2];
-        coordinates[0][0] = 7;  // H8 row
-        coordinates[0][1] = 7;  // H8 column
-        
+        coordinates[0][0] = 7; // H8 row
+        coordinates[0][1] = 7; // H8 column
+
         // Input 2 additional coordinates
         for (int i = 1; i < 3; i++) {
           bool valid_input = false;
@@ -294,14 +299,14 @@ public:
             std::string input;
             std::print("Enter coordinate {}: ", i + 1);
             std::cin >> input;
-            
+
             if (input.length() >= 2) {
               char col = input[0];
               int row = std::stoi(input.substr(1));
-              
+
               int x = col - 'A';
               int y = row - 1;
-              
+
               if (x >= 0 && x < Config::BOARD_SIZE && y >= 0 && y < Config::BOARD_SIZE) {
                 coordinates[i][0] = y;
                 coordinates[i][1] = x;
@@ -314,12 +319,12 @@ public:
             }
           }
         }
-        
+
         // Apply moves: Black (H8), White, Black
-        board[coordinates[0][0]][coordinates[0][1]] = Utils::BLACK;  // First move (Black) at H8
-        board[coordinates[1][0]][coordinates[1][1]] = Utils::WHITE;  // Second move (White)
-        board[coordinates[2][0]][coordinates[2][1]] = Utils::BLACK;  // Third move (Black)
-        
+        board[coordinates[0][0]][coordinates[0][1]] = Utils::BLACK; // First move (Black) at H8
+        board[coordinates[1][0]][coordinates[1][1]] = Utils::WHITE; // Second move (White)
+        board[coordinates[2][0]][coordinates[2][1]] = Utils::BLACK; // Third move (Black)
+
         std::println("Custom opening applied! (H8 + your 2 coordinates)");
         break;
     }
@@ -355,18 +360,17 @@ public:
       std::println("3. 流星局 (B:H8;W:I9;B:J6)");
       std::println("4. 自定义开局(input 2 coordinates)");
       std::print("Choose: ");
-      
+
       int opening_choice;
       std::cin >> opening_choice;
-      
+
       if (opening_choice >= 1 && opening_choice <= 4) {
         apply_fixed_opening(board, opening_choice);
         if (opening_choice != 4) {
           std::println("Fixed opening applied!");
         }
       }
-    }
-    else{
+    } else {
       std::println("You go first, please input 2 coordinates");
       apply_fixed_opening(board, 4);
     }
@@ -400,7 +404,7 @@ public:
         std::println("AI will play as Black.");
       }
     }
-    //当前应该先手是白棋
+    // 当前应该先手是白棋
     game.agent = std::make_unique<MCTSAgent>(board, Utils::WHITE, settings.thread_count);
 
     // Initialize game record
@@ -425,7 +429,7 @@ public:
     std::println("- Quit: Enter 'quit'\n");
 
     print_board(game.agent->last_move_board());
-
+    float win_rate = 0.0f;
     while (!game.game_ended && move_count < Config::BOARD_SQUARES) {
       const Utils::Board &root_board = game.agent->last_move_board();
       bool is_my_turn = (current_player == Utils::BLACK && game.my_turn_first) ||
@@ -497,45 +501,45 @@ public:
       } else {
         // AI's turn
         std::println("AI is thinking...");
-        
         // 启动思考计时器
         thinking_timer.startThinking();
-        
+
         auto start = std::chrono::high_resolution_clock::now();
         // Calculate simulations based on thinking time (rough estimate)
-        int target_simulations = std::max(1000, settings.think_time_ms * 10);
+        int target_simulations = 800;
         game.agent->run_mcts(target_simulations);
         int sim_count = game.agent->get_simulations_completed();
         auto end = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-        
+
         // 停止思考计时器
         thinking_timer.stopThinking();
 
         int move_idx = game.agent->next_move_idx();
-        //五手N打
-        if(move_idx == 5){
+        win_rate = game.agent->root->value();
+        // 五手N打
+        if (move_idx == 5) {
           // 第五手特殊处理：AI显示N个落子位置供玩家选择
           std::println("\n=== Fifth Move Selection ===");
-          
+
           // 让玩家输入位置数量
           int num_positions;
           bool valid_input = false;
           while (!valid_input) {
             std::print("How many positions do you want? (2-5): ");
             std::cin >> num_positions;
-            
+
             if (num_positions >= 2 && num_positions <= 5) {
               valid_input = true;
             } else {
               std::println("Invalid number! Please enter a number between 2 and 5.");
             }
           }
-          
+
           std::println("AI suggests {} possible moves:", num_positions);
-          
+
           std::vector<int> n_moves = ai_get_n_moves(game.agent->last_move_board(), num_positions);
-          
+
           // 显示N个位置
           for (int i = 0; i < num_positions; i++) {
             int r = n_moves[i] / Config::BOARD_SIZE;
@@ -548,7 +552,7 @@ public:
           std::print("Please choose a move (1-{}): ", num_positions);
           int choice;
           std::cin >> choice;
-          
+
           if (choice >= 1 && choice <= num_positions) {
             move_idx = n_moves[choice - 1];
             std::println("You chose move {}.", choice);
@@ -557,11 +561,11 @@ public:
             move_idx = n_moves[0];
           }
         }
-        if (move_idx == -1) {
+        if (move_idx == Network::PASS_IDX) {
           std::println("AI chose to pass");
-          game.agent->apply_move(-1);
+          game.agent->apply_move(Network::PASS_IDX);
           game.consecutive_passes++;
-          game.record.addMove(current_player == Utils::BLACK ? Utils::BLACK : Utils::WHITE, -1);
+          game.record.addMove(current_player == Utils::BLACK ? Utils::BLACK : Utils::WHITE, Network::PASS_IDX);
 
           if (game.consecutive_passes >= 2) {
             std::println("Two consecutive passes, game is a draw!");
@@ -574,14 +578,15 @@ public:
           int r = move_idx / Config::BOARD_SIZE;
           int c = move_idx % Config::BOARD_SIZE;
           char col = 'A' + c;
-          std::println("AI placed stone: {}{} | Time: {}ms | Simulations: {}",
-                    col, r + 1, duration.count(), sim_count);
+          std::println("AI placed stone: {}{} | Time: {}ms | Simulations: {}", col, r + 1, duration.count(), sim_count);
           game.record.addMove(current_player == Utils::BLACK ? Utils::BLACK : Utils::WHITE, move_idx);
           game.consecutive_passes = 0;
         }
       }
 
       print_board(game.agent->last_move_board());
+      std::println("AI Win Rate: {}", win_rate);
+      std::println("New Root Node Visit Count: {}", game.agent->root->visit_count.load());
 
       // Check win
       if (check_win(game.agent->last_move_board(), current_player)) {

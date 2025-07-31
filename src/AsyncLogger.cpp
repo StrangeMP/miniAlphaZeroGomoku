@@ -1,13 +1,14 @@
 #include "AsyncLogger.hpp"
 #include <chrono>
+#include <string_view>
 
-AsyncLogger &AsyncLogger::getInstance() {
-  static AsyncLogger instance;
+AsyncLogger &AsyncLogger::getInstance(std::string_view filename) {
+  static AsyncLogger instance(filename);
   return instance;
 }
 
-AsyncLogger::AsyncLogger(const std::string &filename) {
-  log_file_.open(filename, std::ios::out | std::ios::app);
+AsyncLogger::AsyncLogger(std::string_view filename) {
+  log_file_.open(filename.data(), std::ios::out);
   if (!log_file_.is_open()) {
     throw std::runtime_error("Failed to open log file.");
   }

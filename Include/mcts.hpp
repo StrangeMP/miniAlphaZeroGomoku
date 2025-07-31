@@ -308,7 +308,11 @@ private:
 //
 class MCTSAgent {
 private:
+public:
   std::unique_ptr<Node> root;
+
+private:
+  static constexpr float VIRTUAL_LOSS_VALUE = -0.1f;
   std::vector<std::unique_ptr<std::thread>> worker_threads;
   std::atomic<bool> stop_search{false};
   std::atomic<int> simulations_completed{0};
@@ -328,74 +332,58 @@ private:
 
   void run_single_simulation() {
     Node *node = root.get();
-
-    // Selection phase
     std::vector<Node *> path;
     float backup_value = 0.0f;
-    bool collision_occurred = false;
 
-    while (!node->is_end_node) {
+    // --- Phase 1: Descend through the EXPANDED part of the tree ---
+    while (node->is_evaluated() && !node->is_end_node) {
       path.push_back(node);
-
-      // Check for collision: if node is being expanded by another thread
-      if (node->is_expanding()) {
-        // COLLISION DETECTED: Treat as immediate loss
-        backup_value = -1.0f;
-        collision_occurred = true;
-        break;
-      }
-
       auto [best_action_idx, next_node] = node->select_child();
-      if (next_node != nullptr) {
-        node = next_node;
-      } else {
-        // Try to claim this node for expansion
-        if (!node->try_claim_for_expansion()) {
-          // Another thread claimed it first - treat as collision
-          backup_value = -1.0f;
-          collision_occurred = true;
-          break;
-        }
 
-        // Successfully claimed - create new child
+      if (next_node == nullptr) {
+        // We've chosen an action that leads to a node that needs to be created.
         std::lock_guard<std::mutex> lock(node->node_mutex);
-        auto &best_child_ptr = node->children[best_action_idx];
-        if (best_child_ptr == nullptr) { // Double-check after lock
-          best_child_ptr = std::make_unique<Node>(node, node->policy()[best_action_idx], node->opponent_color,
-                                                  node->board_state, best_action_idx);
+        auto &child_ptr = node->children[best_action_idx];
+        if (child_ptr == nullptr) { // Double-check after lock
+          child_ptr = std::make_unique<Node>(node, node->policy()[best_action_idx], node->opponent_color,
+                                             node->board_state, best_action_idx);
         }
-        node = best_child_ptr.get();
-        path.push_back(node);
-        break;
+        node = child_ptr.get();
+      } else {
+        // The child already existed, just move to it.
+        node = next_node;
       }
     }
 
-    // CRITICAL: Apply virtual loss FIRST to reserve the path
+    // --- Phase 2: Handle the "edge" node found by the loop ---
+    path.push_back(node);
+
+    // CRITICAL: Apply virtual loss BEFORE any potential blocking/waiting
     for (Node *n : path) {
       n->virtual_loss_count.fetch_add(1);
     }
 
-    if (!collision_occurred) {
-      // Normal path: evaluate with network if needed
-      if (!node->is_end_node && node->is_unexpanded()) {
-        if (node->try_claim_for_expansion()) {
-          node->evaluate_with_network();
-        } else {
-          // Collision during evaluation attempt
-          backup_value = -1.0f;
-          collision_occurred = true;
-        }
-      }
-
-      if (!collision_occurred) {
+    if (node->is_end_node) {
+      // We reached a terminal node.
+      backup_value = node->value();
+    } else if (node->is_expanding()) {
+      // We collided with a node another thread is currently evaluating.
+      backup_value = VIRTUAL_LOSS_VALUE; // Small negative value for virtual loss
+    } else {                             // The node must be UNEXPANDED.
+      // Try to claim and evaluate this leaf node.
+      if (node->try_claim_for_expansion()) {
+        node->evaluate_with_network();
         backup_value = node->value();
+      } else {
+        // We lost the race to claim it. Treat as a collision.
+        backup_value = VIRTUAL_LOSS_VALUE; // Small negative value for virtual loss
       }
     }
 
-    // Backpropagation with real statistics
+    // --- Phase 3: Backpropagation ---
     node->backpropagate(backup_value);
 
-    // Remove virtual loss from entire path
+    // Remove virtual loss from the entire path
     for (Node *n : path) {
       n->virtual_loss_count.fetch_sub(1);
     }

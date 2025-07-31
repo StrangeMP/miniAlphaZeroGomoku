@@ -81,6 +81,7 @@ file(GLOB_RECURSE MAIN_SOURCES CONFIGURE_DEPENDS
     "src/network.cpp"
     "src/dispatcher.cpp"
     "src/ForbiddenPointFinder.cpp"
+    "src/AsyncLogger.cpp"
 )
 
 # Add the main executable
@@ -94,7 +95,7 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
 endif()
 
 # Add run_nn_inference executable
-add_executable(run_nn_inference src/run_nn_inference.cpp src/network.cpp src/dispatcher.cpp src/ForbiddenPointFinder.cpp)
+add_executable(run_nn_inference src/run_nn_inference.cpp src/network.cpp src/dispatcher.cpp src/ForbiddenPointFinder.cpp src/AsyncLogger.cpp)
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_definitions(run_nn_inference PRIVATE DEBUG)
