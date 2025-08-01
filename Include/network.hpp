@@ -3,7 +3,6 @@
 #include "utils.hpp"
 #include <cstddef>
 #include <cuda_runtime.h>
-#include <tuple>
 #include <utility>
 
 namespace MCTS {

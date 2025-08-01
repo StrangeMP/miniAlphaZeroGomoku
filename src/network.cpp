@@ -1,5 +1,5 @@
 #include "network.hpp"
-#include "ForbiddenPointFinder.h"
+#include "board.h"
 #include "config.hpp"
 #include "dispatcher.hpp"
 #include <NvInfer.h>
@@ -69,8 +69,8 @@ struct TensorRTState {
 // File-static instance, initialized once.
 static TensorRTState g_trt_state;
 
-void Network::feed(void *d_binary_input, void *d_global_input, void *d_policy_output,
-                   void *d_value_output, int batch_size, cudaStream_t stream) {
+void Network::feed(void *d_binary_input, void *d_global_input, void *d_policy_output, void *d_value_output,
+                   int batch_size, cudaStream_t stream) {
 
   if (batch_size == 0) {
     return;
@@ -147,8 +147,8 @@ Network::InputUnit_T Network::prepareInput(const Matrix<Utils::STONE_COLOR, BOAR
   };
   auto p_input = get_input_template();
   auto &[binary, global] = p_input;
-  // global[5] = player == Utils::BLACK ? -1.0f : 1.0f;
-  CForbiddenPointFinder fpf(board);
+  global[5] = player == Utils::BLACK ? -1.0f : 1.0f;
+  ForbidChecker f(board);
   for (size_t r = 0; r < BOARD_SIZE; ++r) {
     for (size_t c = 0; c < BOARD_SIZE; ++c) {
       auto stone = board[r][c];
@@ -158,9 +158,9 @@ Network::InputUnit_T Network::prepareInput(const Matrix<Utils::STONE_COLOR, BOAR
         binary[2][r][c] = 1.0f; // 对方的棋子
       }
 
-      if (fpf.isForbidden(r, c)) {
+      if (f.isForbidden(MakePos(r, c))) {
         if (player == Utils::BLACK) {
-          binary[3][r][c] = 1.0f;            // 己方黑棋禁手
+          binary[3][r][c] = 1.0f; // 己方黑棋禁手
         } else {
           binary[4][r][c] = 1.0f; // 对方黑棋禁手
         }

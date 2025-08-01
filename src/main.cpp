@@ -1,7 +1,6 @@
-#include "ForbiddenPointFinder.h"
+#include "board.h"
 #include "config.hpp"
 #include "gomoku_record.hpp"
-#include "heuristic.hpp"
 #include "network.hpp"
 #include "utils.hpp"
 #include <algorithm>
@@ -45,16 +44,17 @@ public:
   }
 
   void undo_last_move() {
-    if (move_history.empty()) return;
-    
+    if (move_history.empty())
+      return;
+
     int last_move = move_history.back();
     move_history.pop_back();
-    
+
     if (last_move != Network::PASS_IDX) {
       auto [r, c] = Utils::index_to_coordinate(last_move);
       current_board[r][c] = Utils::EMPTY;
     }
-    
+
     current_player = (current_player == Utils::BLACK ? Utils::WHITE : Utils::BLACK);
   }
 
@@ -62,35 +62,34 @@ public:
     // Get network evaluation
     auto result = Network::evaluate(current_board, current_player);
     auto &[policy, value] = *result;
-    
+
     // Find best legal move
     float best_value = -std::numeric_limits<float>::infinity();
     int best_move = Network::PASS_IDX; // Default to pass
-    
+    ForbidChecker f(current_board);
     // Check regular moves
     for (int i = 0; i < Config::BOARD_SQUARES; ++i) {
       auto [r, c] = Utils::index_to_coordinate(i);
       if (current_board[r][c] == Utils::EMPTY) {
         // Check if move is legal for black (forbidden points)
         if (current_player == Utils::BLACK) {
-          CForbiddenPointFinder fpf(current_board);
-          if (fpf.isForbidden(r, c)) {
+          if (f.isForbidden(MakePos(r, c))) {
             continue;
           }
         }
-        
+
         if (policy[i] > best_value) {
           best_value = policy[i];
           best_move = i;
         }
       }
     }
-    
+
     // Check pass move
     if (policy[Network::PASS_IDX] > best_value) {
       best_move = Network::PASS_IDX;
     }
-    
+
     return best_move;
   }
 
@@ -103,45 +102,41 @@ public:
 };
 
 std::vector<int> get_top_n_policy_moves(const Utils::Board &board, Utils::STONE_COLOR color, int n) {
-    // Run network inference to get policy
-    auto policy_result = Network::evaluate(board, color);
+  // Run network inference to get policy
+  auto policy_result = Network::evaluate(board, color);
 
-    // Copy policy to a vector of pairs (index, value)
-    std::vector<std::pair<int, float>> indexed_policy;
-    indexed_policy.reserve(Config::BOARD_SQUARES);
+  // Copy policy to a vector of pairs (index, value)
+  std::vector<std::pair<int, float>> indexed_policy;
+  indexed_policy.reserve(Config::BOARD_SQUARES);
+  for (int i = 0; i < Config::BOARD_SQUARES; ++i) {
+    indexed_policy.emplace_back(i, policy_result->first[i]);
+  }
+
+  // If color is black, set forbidden moves' policy to -inf so they are ignored
+  ForbidChecker f(board);
+  if (color == Utils::STONE_COLOR::BLACK) {
     for (int i = 0; i < Config::BOARD_SQUARES; ++i) {
-        indexed_policy.emplace_back(i, policy_result->first[i]);
+      auto [x, y] = Utils::index_to_coordinate(i);
+      if (f.isForbidden(MakePos(x, y))) {
+        indexed_policy[i].second = -std::numeric_limits<float>::infinity();
+      }
     }
+  }
 
-    // If color is black, set forbidden moves' policy to -inf so they are ignored
-    if (color == Utils::STONE_COLOR::BLACK) {
-        CForbiddenPointFinder fpf(board);
-        for (int i = 0; i < Config::BOARD_SQUARES; ++i) {
-            auto [x, y] = Utils::index_to_coordinate(i);
-            if (fpf.isForbidden(x, y)) {
-                indexed_policy[i].second = -std::numeric_limits<float>::infinity();
-            }
-        }
-    }
+  // Partial sort to get top n
+  if (n > static_cast<int>(indexed_policy.size()))
+    n = static_cast<int>(indexed_policy.size());
+  std::partial_sort(indexed_policy.begin(), indexed_policy.begin() + n, indexed_policy.end(),
+                    [](const auto &a, const auto &b) { return a.second > b.second; });
 
-    // Partial sort to get top n
-    if (n > static_cast<int>(indexed_policy.size())) n = static_cast<int>(indexed_policy.size());
-    std::partial_sort(
-        indexed_policy.begin(),
-        indexed_policy.begin() + n,
-        indexed_policy.end(),
-        [](const auto &a, const auto &b) { return a.second > b.second; }
-    );
-
-    // Collect indices of top n
-    std::vector<int> result;
-    result.reserve(n);
-    for (int i = 0; i < n; ++i) {
-        result.push_back(indexed_policy[i].first);
-    }
-    return result;
+  // Collect indices of top n
+  std::vector<int> result;
+  result.reserve(n);
+  for (int i = 0; i < n; ++i) {
+    result.push_back(indexed_policy[i].first);
+  }
+  return result;
 }
-
 
 // Timer class for cumulative AI thinking display
 class ThinkingTimer {
@@ -462,8 +457,9 @@ public:
 
   // AI换手判断函数 (占位符)
   bool ai_should_swap(const Utils::Board &board) {
-    auto result = Network::evaluate(board, Utils::WHITE);
-    return result->second < -0.0f;
+    // auto result = Network::evaluate(board, Utils::WHITE);
+    // return result->second < -0.0f;
+    return false;
   }
 
   // AI第五手N个落子位置
@@ -651,20 +647,6 @@ public:
     }
   }
 
-  std::optional<int> get_win_point(const Utils::Board &board, Utils::STONE_COLOR color) {
-    auto threats = find_all_threats(board, color);
-    for (auto [coord, threat_type] : threats) {
-      if (threat_type == 2) {
-        auto idx = Utils::coordinate_to_index(coord);
-        auto [r, c] = Utils::index_to_coordinate(idx);
-        if (board[r][c] == Utils::EMPTY) {
-          return idx;
-        }
-      }
-    }
-    return std::nullopt;
-  }
-
   // Game setup
   void show_game_setup() {
     std::println("\n=== Game Setup ===");
@@ -827,23 +809,25 @@ public:
         }
 
         if (input == "undo") {
-            // Undo last two moves if possible (player + AI)
-            game.agent->undo_last_move(); // Undo player's move
-            game.agent->undo_last_move(); // Undo AI's move
+          // Undo last two moves if possible (player + AI)
+          game.agent->undo_last_move(); // Undo player's move
+          game.agent->undo_last_move(); // Undo AI's move
 
-            // Remove last two moves from game record
-            if (game.record.getCurrentStep() > 0) game.record.undoLastMove();
-            if (game.record.getCurrentStep() > 0) game.record.undoLastMove();
+          // Remove last two moves from game record
+          if (game.record.getCurrentStep() > 0)
+            game.record.undoLastMove();
+          if (game.record.getCurrentStep() > 0)
+            game.record.undoLastMove();
 
-            // Decrement move_count by 2 (but not below 4)
-            move_count = (std::max)(4, move_count - 2);
+          // Decrement move_count by 2 (but not below 4)
+          move_count = (std::max)(4, move_count - 2);
 
-            // Reset consecutive passes
-            game.consecutive_passes = 0;
+          // Reset consecutive passes
+          game.consecutive_passes = 0;
 
-            // Redraw board
-            print_board(game.agent->last_move_board());
-            continue;
+          // Redraw board
+          print_board(game.agent->last_move_board());
+          continue;
         }
 
         if (input == "pass") {
@@ -865,12 +849,12 @@ public:
             std::println("{}", coord_result.error_message);
             continue;
           }
-          
+
           // Check if move is legal for black (forbidden points)
+          ForbidChecker f(game.agent->last_move_board());
           if (current_player == Utils::BLACK) {
-            CForbiddenPointFinder fpf(game.agent->last_move_board());
             auto [r, c] = Utils::index_to_coordinate(coord_result.index);
-            if (fpf.isForbidden(r, c)) {
+            if (f.isForbidden(MakePos(r, c))) {
               std::println("Illegal move! This position is forbidden for Black.");
               continue;
             }
@@ -897,13 +881,9 @@ public:
         thinking_timer.startThinking();
 
         auto start = std::chrono::high_resolution_clock::now();
-        
+
         // Get AI move using network inference
         move_idx = game.agent->next_move_idx();
-        auto win_point = get_win_point(game.agent->last_move_board(), current_player);
-        if (win_point) {
-          move_idx = *win_point;
-        }
 
         auto end = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
