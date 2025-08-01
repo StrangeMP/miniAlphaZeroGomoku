@@ -4,13 +4,13 @@
 #include "heuristic.hpp"
 #include "network.hpp"
 #include "utils.hpp"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <fstream>
 #include <iostream>
 #include <optional>
 #include <print>
-#include <queue>
 #include <string>
 #include <thread>
 #include <vector>
@@ -827,8 +827,23 @@ public:
         }
 
         if (input == "undo") {
-          game.agent->undo_last_move();
-          continue;
+            // Undo last two moves if possible (player + AI)
+            game.agent->undo_last_move(); // Undo player's move
+            game.agent->undo_last_move(); // Undo AI's move
+
+            // Remove last two moves from game record
+            if (game.record.getCurrentStep() > 0) game.record.undoLastMove();
+            if (game.record.getCurrentStep() > 0) game.record.undoLastMove();
+
+            // Decrement move_count by 2 (but not below 4)
+            move_count = (std::max)(4, move_count - 2);
+
+            // Reset consecutive passes
+            game.consecutive_passes = 0;
+
+            // Redraw board
+            print_board(game.agent->last_move_board());
+            continue;
         }
 
         if (input == "pass") {
