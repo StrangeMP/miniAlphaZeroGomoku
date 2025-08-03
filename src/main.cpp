@@ -457,9 +457,8 @@ public:
 
   // AI换手判断函数 (占位符)
   bool ai_should_swap(const Utils::Board &board) {
-    // auto result = Network::evaluate(board, Utils::WHITE);
-    // return result->second < -0.0f;
-    return false;
+    auto result = Network::evaluate(board, Utils::WHITE);
+    return result->second < 0.0f;
   }
 
   // AI第五手N个落子位置
@@ -856,7 +855,8 @@ public:
             auto [r, c] = Utils::index_to_coordinate(coord_result.index);
             if (f.isForbidden(MakePos(r, c))) {
               std::println("Illegal move! This position is forbidden for Black.");
-              continue;
+
+              break;
             }
           }
           if (!coord_result.valid) {

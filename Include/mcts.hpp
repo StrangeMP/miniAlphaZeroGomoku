@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ForbiddenPointFinder.h"
+#include "board.h"
 #include "config.hpp"
 #include "network.hpp"
 #include <array>
@@ -89,10 +89,10 @@ struct Node {
 
     legal_moves = Utils::legal_moves(board_state);
     if (current_color == Utils::BLACK) {
-      CForbiddenPointFinder fpf(board_state);
+      ForbidChecker fpf(board_state);
       for (int i = 0; i < Config::BOARD_SQUARES; ++i) {
         auto [r, c] = Utils::index_to_coordinate(i);
-        if (fpf.isForbidden(r, c)) {
+        if (fpf.isForbidden(MakePos(r, c))) {
           legal_moves[i] = false;
         }
       }
